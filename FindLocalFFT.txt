@@ -1,0 +1,12 @@
+find_package(MKL)
+
+if (MKL_LIBRARIES)
+    set(LOCAL_FFT_LIB MKL)
+    set(LOCAL_FFT_LIBRARIES "${MKL_LIBRARIES}")
+    include_directories(${MKL_INCLUDE_DIR})
+endif()
+
+if (NOT LOCAL_FFT_LIB)
+    message(FATAL_ERROR "No local FFT library found")
+endif()
+

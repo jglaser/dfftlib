@@ -1,0 +1,7 @@
+#ifndef __DFFT_LIB_CONFIG_H__
+#define __DFFT_LIB_CONFIG_H__
+
+// global settings
+#define LOCAL_FFT_LIB @LOCAL_FFT_LIB@
+
+#endif
