@@ -519,7 +519,7 @@ void redistribute_nd(int *dim,
             int *dfft_nrecv,
             int *dfft_offset_send,
             int *dfft_offset_recv,
-            int dir,
+            int c2b,
             MPI_Comm comm)
     {
     cpx_t *cur_work =work;
@@ -529,7 +529,7 @@ void redistribute_nd(int *dim,
     for (current_dim = 0; current_dim < ndim; ++current_dim)
         {
         /* redistribute along one dimension (in-place) */
-        if (!dir)
+        if (!c2b)
             dfft_redistribute_block_to_cyclic_1d(dim, pdim, ndim, current_dim,
                 1, pdim[current_dim], pidx, size, embed,
                 cur_work, cur_scratch, dfft_nsend,dfft_nrecv,
@@ -709,7 +709,7 @@ int dfft_create_plan(dfft_plan *p,
     for (i = 0; i < ndim; ++i)
         {
         /* plan for short-distance butterflies */
-        int st = size*gdim[i]/pdim[i]/p->inembed[i];
+        int st = size/p->inembed[i]*(gdim[i]/pdim[i]);
         dfft_create_1d_plan(&(p->plans_short_forward[i]),p->k0[i],
             st/(p->k0[i]), st/(p->k0[i]), 1, st/(p->k0[i]), 1, 0);
         dfft_create_1d_plan(&(p->plans_short_inverse[i]),p->k0[i],
@@ -775,6 +775,7 @@ void dfft_destroy_plan(dfft_plan p)
     free(p.gdim);
 
     dfft_free_aligned_memory(p.scratch);
+    dfft_free_aligned_memory(p.scratch_2);
 
     dfft_teardown_local_fft();
     }
@@ -806,7 +807,7 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
         /* redistribution of input */
         redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
             p.size_in, p.inembed, work, scratch, p.nsend,p.nrecv,
-            p.offset_send,p.offset_recv, dir, p.comm); 
+            p.offset_send,p.offset_recv, 0, p.comm); 
         }
 
     /* multi-dimensional FFT */
@@ -817,12 +818,13 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
         p.rho_L, p.rho_pk0, p.rho_Lk0, p.nsend,p.nrecv,
         p.offset_send,p.offset_recv, p.comm);
 
+    int c2b = ((!dir && p.input_cyclic) || (dir && !p.output_cyclic)) ? 1 : 0;
     if ((dir && !p.input_cyclic) || (!dir && !p.input_cyclic))
         {
         /* redistribution of output */
         redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
             p.size_out,p.oembed, work, scratch, p.nsend,p.nrecv,
-            p.offset_send,p.offset_recv, dir, p.comm); 
+            p.offset_send,p.offset_recv, 1, p.comm); 
         }
 
     if (out_of_place)

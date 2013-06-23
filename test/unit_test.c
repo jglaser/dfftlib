@@ -23,13 +23,16 @@
     }
         
 void test_distributed_fft_nd(int nd);
+void test_distributed_fft_1d_compare(int n);
+void test_distributed_fft_3d_compare();
 
 int main(int argc, char **argv)
     {
     MPI_Init(&argc, &argv);
 
-    int s;
+    int s,p;
     MPI_Comm_rank(MPI_COMM_WORLD, &s);
+    MPI_Comm_size(MPI_COMM_WORLD, &p);
     /* basic test in n = 1 .. 7 dimensions */
     int nd;
     for (nd = 1; nd <= 7; nd++)
@@ -38,6 +41,18 @@ int main(int argc, char **argv)
         test_distributed_fft_nd(nd);
         }
 
+    if (!s) printf("Compare against KISS FFT (d=1)...\n");
+    int i;
+    for (i = 1; i < 24; ++i)
+        {
+        int n = (1 << i);
+        if (n <= p) continue;
+        if (!s) printf("N=%d\n",n);
+        test_distributed_fft_1d_compare(n);
+        }
+
+    if (!s) printf("Compare against KISS FFT (d=3)... \n");
+    test_distributed_fft_3d_compare();
     MPI_Finalize();
     }
 
@@ -301,125 +316,269 @@ void test_distributed_fft_nd(int nd)
 
     free(in_3);
     free(out_3);
+    free(lidx);
+    free(gidx);
 
     dfft_destroy_plan(plan_3_fw);
     dfft_destroy_plan(plan_3_bw);
 
     free(pidx);
     free(pdim);
+    free(dim_glob);
     }
 
-#if 0
-//! Compares a distributed FFT against a single-processor FFT
-template< class DFFT, class cpx_type >
-void test_distributed_fft_compare(shared_ptr<ExecutionConfiguration> exec_conf)
+/* Compare a 1d FFT against a reference FFT */
+void test_distributed_fft_1d_compare(int n)
     {
-    int size;
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    int s,p;
+    MPI_Comm_size(MPI_COMM_WORLD, &p);
+    MPI_Comm_rank(MPI_COMM_WORLD, &s);
 
-    // initialize the domain decomposition
-    boost::shared_ptr<DomainDecomposition> decomposition(new DomainDecomposition(exec_conf, make_scalar3(1.0,1.0,1.0)));
+    int pdim[1];
+    pdim[0]=p;
 
-    // in FFT w/single prec, round-off errors can sum up quickly
-    Scalar tol_rough = 0.15;
+    /* determine processor index */
+    int pidx[1];
+    pidx[0]=s;
 
-    // Do a size.x*4 x size.y * 6 x size.z * 8 FFT (total dimensions)
-    Index3D domain_idx = decomposition->getDomainIndexer();
-    int dims[3];
-    unsigned int local_nx = 4;
-    unsigned int local_ny = 6;
-    unsigned int local_nz = 8;
-    unsigned int nx = domain_idx.getW()*local_nx;
-    unsigned int ny = domain_idx.getH()*local_ny;
-    unsigned int nz = domain_idx.getD()*local_nz;
-    dims[0] = nz; dims[1] = ny; dims[2] = nx;
+    double tol = 0.01;
+    double abs_tol = .1;
+    int dim_glob[1];
+    dim_glob[0] = n;
 
-    kiss_fft_cpx *in_kiss = new kiss_fft_cpx[nx*ny*nz];
+    // Do a size n FFT (n = power of two)
+    kiss_fft_cpx *in_kiss;
+    in_kiss = (kiss_fft_cpx *)malloc(sizeof(kiss_fft_cpx)*n);
 
-    Saru saru(12345);
+    srand(45678);
 
-    // fill table with complex random numbers in row major order
-    for (unsigned int x = 0; x < nx; ++x)
-        for (unsigned int y = 0; y < ny; ++y)
-            for (unsigned int z = 0; z < nz; ++z)
-                {
-                in_kiss[x+nx*(y+ny*z)].r =  saru.f(-100.0,100.0);
-                in_kiss[x+nx*(y+ny*z)].i =  saru.f(-100.0,100.0);
-                }
+    // fill vector with complex random numbers in row major order
+    int i;
+    for (i = 0; i < n; ++i)
+        {
+        in_kiss[i].r = (float)rand()/(float)RAND_MAX;
+        in_kiss[i].i =(float)rand()/(float)RAND_MAX;
+        }
 
-    kiss_fft_cpx *out_kiss = new kiss_fft_cpx[nx*ny*nz];
+    kiss_fft_cpx *out_kiss;
+    out_kiss = (kiss_fft_cpx *)malloc(sizeof(kiss_fft_cpx)*n);
 
     // construct forward transform
-    kiss_fftnd_cfg cfg = kiss_fftnd_alloc(dims,3,0,NULL,NULL);
+    kiss_fft_cfg cfg = kiss_fft_alloc(n,0,NULL,NULL);
+
+    // carry out conventional FFT
+    kiss_fft(cfg, in_kiss, out_kiss);
+
+    // compare to distributed FFT
+    cpx_t * in;
+    in = (cpx_t *)malloc(sizeof(cpx_t)*n/p);
+
+    for (i = 0; i < n/p; ++i)
+        {
+        RE(in[i]) = in_kiss[s*n/p+i].r;
+        IM(in[i]) = in_kiss[s*n/p+i].i;
+        }
+
+    cpx_t *out;
+    out = (cpx_t *) malloc(n/p*sizeof(cpx_t));
+
+    dfft_plan plan;
+    dfft_create_plan(&plan,1, dim_glob, NULL, NULL, pdim, 0, 0, MPI_COMM_WORLD);
+
+    // forward transform
+    dfft_execute(in, out, 0, plan);
+
+    // do comparison
+    for (i = 0; i < n/p; ++i)
+        {
+
+        int j = s*n/p + i;
+
+        double re = RE(out[i]);
+        double im = IM(out[i]);
+        double re_kiss = out_kiss[j].r;
+        double im_kiss = out_kiss[j].i;  
+
+        if (fabs(re_kiss) < abs_tol)
+            {
+            CHECK_SMALL(re,2*abs_tol);
+            }
+        else
+            {
+            CHECK_CLOSE(re,re_kiss, tol);
+            }
+
+        if (fabs(im_kiss) < abs_tol)
+            {
+            CHECK_SMALL(im,2*abs_tol);
+            }
+        else
+            {
+            CHECK_CLOSE(im, im_kiss, tol);
+            }
+        }
+    free(in_kiss);
+    free(out_kiss);
+    free(out);
+    free(in);
+    dfft_destroy_plan(plan);
+    }
+ 
+/* Compare a 3d FFT against a reference FFT */
+void test_distributed_fft_3d_compare()
+    {
+    int s,p;
+    MPI_Comm_size(MPI_COMM_WORLD, &p);
+    MPI_Comm_rank(MPI_COMM_WORLD, &s);
+
+    int nd = 3;
+    int *pdim;
+    pdim = (int *) malloc(sizeof(int)*nd);
+    /* choose a decomposition */
+    int r = powf(p,1.0/(double)nd)+0.5;
+    int root = 1;
+    while (root < r) root*=2;
+    int ptot = 1;
+    if (!s) printf("Processor grid: ");
+    int i;
+    for (i = 0; i < nd-1; ++i)
+        {
+        pdim[i] = (((ptot*root) > p) ? 1 : root);
+        ptot *= pdim[i];
+        if (!s) printf("%d x ",pdim[i]);
+        }
+    pdim[nd-1] = p/ptot;
+    if (!s) printf("%d\n", pdim[nd-1]);
+
+    /* determine processor index */
+    int *pidx;
+    pidx = (int*)malloc(nd*sizeof(int));
+    int idx = s;
+    for (i = nd-1; i >= 0; --i)
+        {
+        pidx[i] = idx % pdim[i];
+        idx /= pdim[i];
+        }
+
+    double tol = 0.001;
+    double abs_tol = 0.2;
+    int *dim_glob;
+    dim_glob = (int *) malloc(sizeof(int)*nd);
+
+    // Do a pdim[0]*4 x pdim[1]* 8 x pdim[2] * 16 FFT (powers of two)
+    int local_nx = 4;
+    int local_ny = 8;
+    int local_nz = 16;
+    dim_glob[0] = pdim[0]*local_nx;
+    dim_glob[1] = pdim[1]*local_ny;
+    dim_glob[2] = pdim[2]*local_nz;
+
+    for (i = 0; i < nd-1; ++i)
+        if (!s) printf("%d x ",dim_glob[i]);
+    if (!s) printf("%d matrix\n", dim_glob[nd-1]);
+ 
+    kiss_fft_cpx *in_kiss;
+    in_kiss = (kiss_fft_cpx *)malloc(sizeof(kiss_fft_cpx)*dim_glob[0]*dim_glob[1]*dim_glob[2]);
+
+    srand(12345);
+
+    // fill table with complex random numbers in row major order
+    int x,y,z;
+    int nx = dim_glob[0];
+    int ny = dim_glob[1];
+    int nz = dim_glob[2];
+    for (x = 0; x < dim_glob[0]; ++x)
+        for (y = 0; y < dim_glob[1]; ++y)
+            for (z = 0; z < dim_glob[2]; ++z)
+                {
+                // KISS has column-major storage
+                in_kiss[z+nz*(y+ny*x)].r = (float)rand()/(float)RAND_MAX;
+                in_kiss[z+nz*(y+ny*x)].i =(float)rand()/(float)RAND_MAX;
+                }
+
+    kiss_fft_cpx *out_kiss;
+    out_kiss = (kiss_fft_cpx *)malloc(sizeof(kiss_fft_cpx)*dim_glob[0]*dim_glob[1]*dim_glob[2]);
+
+    // construct forward transform
+    kiss_fftnd_cfg cfg = kiss_fftnd_alloc(dim_glob,3,0,NULL,NULL);
 
     // carry out conventional FFT
     kiss_fftnd(cfg, in_kiss, out_kiss);
 
     // compare to distributed FFT
-    GPUArray<cpx_type> in(local_nx*local_ny*local_nz,exec_conf);
-    uint3 grid_pos = domain_idx.getTriple(exec_conf->getRank());
+    cpx_t * in;
+    in = (cpx_t *)malloc(sizeof(cpx_t)*local_nx*local_ny*local_nz);
 
-        {
-        // fill in array identically to reference FFT
-        ArrayHandle<cpx_type> h_in(in, access_location::host, access_mode::overwrite);
-        for (unsigned int x = 0; x < nx; ++x)
-            for (unsigned int y = 0; y < ny; ++y)
-                for (unsigned int z = 0; z < nz; ++z)
+    int x_local, y_local, z_local;
+    for (x = 0; x < nx; ++x)
+        for (y = 0; y < ny; ++y)
+            for (z = 0; z < nz; ++z)
+                {
+                if (x>=pidx[0]*local_nx && x < (pidx[0]+1)*local_nx && 
+                    y>=pidx[1]*local_ny && y < (pidx[1]+1)*local_ny &&
+                    z>=pidx[2]*local_nz && z < (pidx[2]+1)*local_nz)
                     {
-                    if (x>= grid_pos.x*local_nx && x < (grid_pos.x+1)*local_nx && 
-                        y>= grid_pos.y*local_ny && y < (grid_pos.y+1)*local_ny &&
-                        z>= grid_pos.z*local_nz && z < (grid_pos.z+1)*local_nz)
-                        {
-                        unsigned int x_local = x - grid_pos.x*local_nx;
-                        unsigned int y_local = y - grid_pos.y*local_ny;
-                        unsigned int z_local = z - grid_pos.z*local_nz;
-                        
-                        h_in.data[z_local+local_nz*(y_local+local_ny*x_local)] =
-                            make_complex<cpx_type>(in_kiss[x+nx*(y+ny*z)].r,
-                                                   in_kiss[x+nx*(y+ny*z)].i);
-                        }
+                    x_local = x - pidx[0]*local_nx;
+                    y_local = y - pidx[1]*local_ny;
+                    z_local = z - pidx[2]*local_nz;
+                   
+                    RE(in[z_local+local_nz*(y_local+local_ny*x_local)]) =
+                        in_kiss[z+nz*(y+ny*x)].r;
+                    IM(in[z_local+local_nz*(y_local+local_ny*x_local)]) =
+                        in_kiss[z+nz*(y+ny*x)].i;
                     }
-        }
+                }
 
-    GPUArray<cpx_type> out(local_nx*local_ny*local_nz,exec_conf);
+    cpx_t *out;
+    out = (cpx_t *) malloc(local_nx*local_ny*local_nz*sizeof(cpx_t));
 
-    DFFT dfft(exec_conf,decomposition, make_uint3(local_nx,local_ny,local_nz), make_uint3(0,0,0));
+    dfft_plan plan;
+    dfft_create_plan(&plan,3, dim_glob, NULL, NULL, pdim, 0, 0, MPI_COMM_WORLD);
 
     // forward transform
-    dfft.FFT3D(in, out, false);
-
-    DFFTIndex index = dfft.getIndexer();
+    dfft_execute(in, out, 0, plan);
 
     // do comparison
+    int n_wave_local = local_nx * local_ny * local_nz;
+    for (i = 0; i < n_wave_local; ++i)
         {
-        ArrayHandle<cpx_type> h_out(out, access_location::host, access_mode::read);
 
-        unsigned int n_wave_local = local_nx * local_ny * local_nz;
-        for (i = 0; i < n_wave_local; ++i)
+        x_local = i / local_ny / local_nz;
+        y_local = (i - x_local*local_ny*local_nz)/local_nz;
+        z_local = i % local_nz;
+
+        x = pidx[0]*local_nx + x_local;
+        y = pidx[1]*local_ny + y_local;
+        z = pidx[2]*local_nz + z_local;
+
+        double re = RE(out[i]);
+        double im = IM(out[i]);
+        double re_kiss = out_kiss[z+nz*(y+ny*x)].r;
+        double im_kiss = out_kiss[z+nz*(y+ny*x)].i;  
+
+        if (fabs(re_kiss) < abs_tol)
             {
-            uint3 kidx = index(i);
-            BOOST_CHECK(kidx.x < nx);
-            BOOST_CHECK(kidx.y < ny);
-            BOOST_CHECK(kidx.z < nz);
+            CHECK_SMALL(re,2*abs_tol);
+            }
+        else
+            {
+            CHECK_CLOSE(re,re_kiss, tol);
+            }
 
-            Scalar re = getRe(h_out.data[i]);
-            Scalar im = getIm(h_out.data[i]);
-            Scalar re_kiss = out_kiss[kidx.x+nx*(kidx.y+ny*kidx.z)].r;
-            Scalar im_kiss = out_kiss[kidx.x+nx*(kidx.y+ny*kidx.z)].i;  
-
-            if (fabs(re_kiss) < tol_rough)
-                BOOST_CHECK_SMALL(re,tol_rough);
-            else
-                BOOST_CHECK_CLOSE(re,re_kiss, tol_rough);
-
-            if (fabs(im_kiss) < tol_rough)
-                BOOST_CHECK_SMALL(im,tol_rough);
-            else
-                BOOST_CHECK_CLOSE(im, im_kiss, tol_rough);
+        if (fabs(im_kiss) < abs_tol)
+            {
+            CHECK_SMALL(im,2*abs_tol);
+            }
+        else
+            {
+            CHECK_CLOSE(im, im_kiss, tol);
             }
         }
-    delete[] in_kiss;
-    delete[] out_kiss;
+    free(in_kiss);
+    free(out_kiss);
+    free(out);
+    free(in);
+    free(pidx);
+    free(dim_glob);
+    dfft_destroy_plan(plan);
     }
-#endif
-

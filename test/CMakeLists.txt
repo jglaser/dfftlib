@@ -1,4 +1,4 @@
-add_executable(unit_test unit_test.c)
+add_executable(unit_test unit_test.c kiss_fft.cc kiss_fftnd.cc)
 target_link_libraries(unit_test dfft)
 
 if(MPI_COMPILE_FLAGS)
