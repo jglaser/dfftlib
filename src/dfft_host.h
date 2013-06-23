@@ -19,19 +19,14 @@
 #endif
 
 /*
- * Data structures needed for a distributed FFT
+ * Data structure for a distributed FFT
  */
 typedef struct
     {
     int ndim;            /* dimensionality */
     int *gdim;           /* global input array dimensions */
     int *inembed;        /* embedding, per dimension, of input array */
-    int istride;         /* stride of input array */
-    int idist;           /* number of elements between batches (input array) */
     int *oembed;         /* embedding, per dimension, of output array */
-    int ostride;         /* stride of input array */
-    int odist;           /* number of elements between batches (output array) */
-    int howmany;         /* How many FFTs should be performed */
  
     plan_t *plans_short_forward;/* short distance butterflies, forward dir */
     plan_t *plans_long_forward;  /* long distance butterflies, inverse dir */
@@ -51,9 +46,13 @@ typedef struct
     int *nrecv;
     int *nsend;
 
-    cpx_t *scratch;    /* Scratch array */
+    cpx_t *scratch;       /* Scratch array */
+    cpx_t *scratch_2;     /* Scratch array */
+    int scratch_size;     /* Size of scratch array */
 
-    int np;               /* size of problem (number of elements) */
+    int np;               /* size of problem (number of elements per proc) */
+    int size_in;          /* size including embedding */
+    int size_out;         /* size including embedding */
     int *k0;              /* Last stage of butterflies (per dimension */
     
     int input_cyclic;     /* ==1 if input for the forward transform is cyclic */
@@ -65,10 +64,8 @@ typedef struct
  */
 EXTERN_DFFT int dfft_create_plan(dfft_plan *plan,
     int ndim, int *gdim,
-    int *inembed, int istride, int idist,
-    int *ombed, int ostride, int odist,
-    int howmany, int *pdim,
-    int input_cyclic, int output_cyclic,
+    int *inembed, int *ombed, 
+    int *pdim, int input_cyclic, int output_cyclic,
     MPI_Comm comm);
 
 /*

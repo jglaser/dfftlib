@@ -45,6 +45,8 @@ void dfft_redistribute_block_to_cyclic_1d(
                   int c0,
                   int c1,
                   int* pidx,
+                  int size_in,
+                  int *embed,
                   cpx_t *work,
                   cpx_t *scratch,
                   int *dfft_nsend,
@@ -56,13 +58,10 @@ void dfft_redistribute_block_to_cyclic_1d(
     /* exit early if nothing needs to be done */
     if (c0 == c1) return;
 
-    /* compute stride for column major matrix storage */
     int length = dim[current_dim]/pdim[current_dim];
-    int np =1;
-    int i;
-    for (i = 0; i < ndim; ++i)
-        np *= dim[i]/pdim[i];
-    int stride = np/length;
+
+    /* compute stride for column major matrix storage */
+    int stride = size_in/embed[current_dim];
 
     /* processor index along current dimension */
     int s = pidx[current_dim];
@@ -70,8 +69,8 @@ void dfft_redistribute_block_to_cyclic_1d(
 
     int ratio = c1/c0;
     int size = ((length/ratio > 1) ? (length/ratio) : 1);
+    int npackets = length/size;
     size *= stride;
-    int npackets = np/size;
 
     int pdim_tot=1;
     int k;
@@ -163,6 +162,8 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
                      int c1,
                      int* pidx,
                      int rev,
+                     int size_in,
+                     int *embed,
                      cpx_t *work,
                      cpx_t *scratch,
                      int *rho_L,
@@ -182,15 +183,11 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
     size = (size ? size : 1);
     int npackets = length/size; 
 
-    int np = 1;
-    int i;
-    for (i = 0; i < ndim; ++i)
-        np *= dim[i]/pdim[i];
-    int stride = np/length;
+    int stride = size_in/embed[current_dim];
 
     /* processor index along current dimension */
-    int s = pidx[current_dim];
-
+    int s=pidx[current_dim];
+    /* number of procs along current dimension */
     int p=pdim[current_dim];
 
     size *= stride;
@@ -207,6 +204,7 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
     for (k = 0; k < ndim; ++k)
         pdim_tot *= pdim[k];
 
+    int i;
     for (i = 0; i < pdim_tot; ++i)
         {
         dfft_nsend[i] = 0;
@@ -380,6 +378,8 @@ void mpifft1d_dif(int *dim,
             int current_dim,
             int* pidx,
             int inverse,
+            int size,
+            int *embed,
             cpx_t *in,
             cpx_t *out,
             plan_t plan_short,
@@ -397,15 +397,9 @@ void mpifft1d_dif(int *dim,
     int length = dim[current_dim]/pdim[current_dim];
 
     /* compute stride for column major matrix storage */
-    int np = 1;
-    int i;
-    for (i = 0; i < ndim; ++i)
-        np *= dim[i]/pdim[i];
-    int stride = np/length;
+    int stride = size/embed[current_dim];
 
-    /* input in pdim[0] x pdim[1] x .. pdim[ndim-1] cylic distribution */
     int c;
-    int k0=length*p;
     for (c = p; c >1; c /= length)
         {
 #if 1
@@ -444,9 +438,8 @@ void mpifft1d_dif(int *dim,
 
         /* in-place redistribute from group-cyclic c -> c1 */
         int c1 = ((c > length) ? (c/length) : 1);
-        k0 = c;
         dfft_redistribute_cyclic_to_block_1d(dim,pdim,ndim,current_dim, c, c1,
-            pidx, rev, in,out,rho_L,rho_pk0,
+            pidx, rev, size, embed, in,out,rho_L,rho_pk0,
             dfft_nsend,dfft_nrecv,dfft_offset_send,dfft_offset_recv,
             comm);
         }
@@ -463,6 +456,9 @@ void mpifftnd_dif(int *dim,
             int ndim,
             int* pidx,
             int inv,
+            int size_in,
+            int *inembed,
+            int *oembed,
             cpx_t *work,
             cpx_t *scratch,
             plan_t *plans_short,
@@ -476,37 +472,38 @@ void mpifftnd_dif(int *dim,
             int *dfft_offset_recv,
             MPI_Comm comm)
     {
-    int np = 1;
-    int i;
-    for (i = 0; i < ndim; ++i)
-        np *= dim[i]/pdim[i];
-
+    int size = size_in;
     int current_dim;
     for (current_dim = 0; current_dim < ndim; ++current_dim)
         {
         /* assume input in local column major */
         mpifft1d_dif(dim, pdim,ndim,current_dim,pidx, inv,
-            work, scratch,
-            plans_short[current_dim],plans_long[current_dim],
-            rho_L[current_dim],rho_pk0[current_dim],rho_Lk0[current_dim],
+            size, inembed, work, scratch, plans_short[current_dim],
+            plans_long[current_dim], rho_L[current_dim],
+            rho_pk0[current_dim],rho_Lk0[current_dim],
             dfft_nsend,dfft_nrecv,dfft_offset_send,dfft_offset_recv,
             comm);
 
-        int length = dim[current_dim]/pdim[current_dim];
-        int stride = np/length;
+        int l = dim[current_dim]/pdim[current_dim];
+        int stride = size/inembed[current_dim];
 
         /* transpose local matrix */
+        int i;
         #pragma omp parallel for private(i)
-        for (i = 0; i < length; ++i)
+        for (i = 0; i < l; ++i)
             {
             int j;
             for (j = 0; j < stride; ++j)
                 {
                 int gidx = j+i*stride;
-                int new_idx = j*length+i;
+                int new_idx = j*oembed[current_dim]+i;
                 work[new_idx] = scratch[gidx];
                 }
             }
+
+        /* update size */
+        size *= oembed[current_dim];
+        size /= inembed[current_dim];
         }
     }
 
@@ -514,6 +511,8 @@ void redistribute_nd(int *dim,
             int *pdim,
             int ndim,
             int* pidx,
+            int size,
+            int *embed,
             cpx_t *work,
             cpx_t *scratch,
             int *dfft_nsend,
@@ -526,38 +525,34 @@ void redistribute_nd(int *dim,
     cpx_t *cur_work =work;
     cpx_t *cur_scratch =scratch;
 
-    int np = 1;
-    int i;
-    for (i = 0; i < ndim; ++i)
-        np *= dim[i]/pdim[i];
-
     int current_dim;
     for (current_dim = 0; current_dim < ndim; ++current_dim)
         {
         /* redistribute along one dimension (in-place) */
         if (!dir)
             dfft_redistribute_block_to_cyclic_1d(dim, pdim, ndim, current_dim,
-                1, pdim[current_dim], pidx, cur_work, cur_scratch,
-                dfft_nsend,dfft_nrecv,dfft_offset_send, dfft_offset_recv,
-                comm);
+                1, pdim[current_dim], pidx, size, embed,
+                cur_work, cur_scratch, dfft_nsend,dfft_nrecv,
+                dfft_offset_send, dfft_offset_recv, comm);
         else
             dfft_redistribute_cyclic_to_block_1d(dim, pdim, ndim, current_dim,
-                pdim[current_dim], 1, pidx, 0, cur_work, cur_scratch,
-                NULL, NULL, dfft_nsend, dfft_nrecv, dfft_offset_send,
-                dfft_offset_recv, comm);
+                pdim[current_dim], 1, pidx, 0, size, embed, cur_work,
+                cur_scratch, NULL, NULL, dfft_nsend,
+                dfft_nrecv, dfft_offset_send, dfft_offset_recv, comm);
         
-        int length = dim[current_dim]/pdim[current_dim];
-        int stride = np/length;
+        int l = dim[current_dim]/pdim[current_dim];
+        int stride = size/embed[current_dim];
 
         /* transpose local matrix from column major to row major */
+        int i;
         #pragma omp parallel for private(i)
-        for (i = 0; i < length; ++i)
+        for (i = 0; i < l; ++i)
             {
             int j;
             for (j = 0; j < stride; ++j)
                 {
                 int gidx = j+i*stride;
-                int new_idx = j*length+i;
+                int new_idx = j*embed[current_dim]+i;
                 cur_scratch[new_idx] =cur_work[gidx];
                 }
             }
@@ -571,7 +566,7 @@ void redistribute_nd(int *dim,
 
     if (ndim % 2)
         {
-        memcpy(work, scratch, sizeof(cpx_t)*np);
+        memcpy(work, scratch, sizeof(cpx_t)*size);
         }
     }
 
@@ -581,10 +576,8 @@ void redistribute_nd(int *dim,
  *****************************************************************************/
 int dfft_create_plan(dfft_plan *p,
     int ndim, int *gdim,
-    int *inembed, int istride, int idist,
-    int *ombed, int ostride, int odist,
-    int howmany, int *pdim,
-    int input_cyclic, int output_cyclic,
+    int *inembed, int *oembed, 
+    int *pdim, int input_cyclic, int output_cyclic,
     MPI_Comm comm)
     {
     int s,nump;
@@ -598,6 +591,9 @@ int dfft_create_plan(dfft_plan *p,
     p->gdim = malloc(ndim*sizeof(int));
     p->pidx = malloc(ndim*sizeof(int));
 
+    p->inembed = malloc(ndim*sizeof(int));
+    p->oembed = malloc(ndim*sizeof(int));
+
     p->ndim = ndim;
 
     int i;
@@ -606,6 +602,32 @@ int dfft_create_plan(dfft_plan *p,
         p->gdim[i] = gdim[i];
         p->pdim[i] = pdim[i];
         }
+
+    if (inembed != NULL)
+        {
+        for (i = 0; i < ndim; i++)
+            p->inembed[i] = inembed[i];
+        }
+    else
+        {
+        for (i = 0; i < ndim; i++)
+            p->inembed[i] = p->gdim[i]/p->pdim[i];
+        }
+
+    if (oembed != NULL)
+        {
+        for (i = 0; i < ndim; i++)
+            p->oembed[i] = oembed[i];
+        }
+    else
+        {
+        for (i = 0; i < ndim; i++)
+            p->oembed[i] = p->gdim[i]/p->pdim[i];
+        }
+    // since we expect column-major input, the leading dimension 
+    // has no embedding
+    p->inembed[0] = gdim[0]/pdim[0];
+    p->oembed[0] = gdim[0]/pdim[0];
 
     p->offset_send = (int *)malloc(sizeof(int)*nump);
     p->offset_recv = (int *)malloc(sizeof(int)*nump);
@@ -618,11 +640,21 @@ int dfft_create_plan(dfft_plan *p,
     p->plans_long_inverse = malloc(sizeof(plan_t)*ndim);
 
     /* local problem size */
+    int size_in = gdim[0]/pdim[0];
+    int size_out = gdim[0]/pdim[0];
     int np = 1;
-    for (i = 0; i < ndim; ++i)
-        np *= gdim[i] / pdim[i];
 
-    p->np = np;
+    for (i = 0; i < ndim; ++i)
+        np *= gdim[i]/pdim[i];
+
+    for (i = 1; i < ndim; ++i)
+        {
+        size_in *= p->inembed[i];
+        size_out *= p->oembed[i];
+        }
+
+    p->size_in = size_in;
+    p->size_out = size_out;
 
     /* find length k0 of last stage of butterflies */
     p->k0 = malloc(sizeof(int)*ndim);
@@ -673,24 +705,35 @@ int dfft_create_plan(dfft_plan *p,
     res = dfft_init_local_fft();
     if (res) return 1;
 
+    int size = size_in;
     for (i = 0; i < ndim; ++i)
         {
         /* plan for short-distance butterflies */
+        int st = size*gdim[i]/pdim[i]/p->inembed[i];
         dfft_create_1d_plan(&(p->plans_short_forward[i]),p->k0[i],
-            np/(p->k0[i]), np/(p->k0[i]), 1, np/(p->k0[i]), 1, 0);
+            st/(p->k0[i]), st/(p->k0[i]), 1, st/(p->k0[i]), 1, 0);
         dfft_create_1d_plan(&(p->plans_short_inverse[i]),p->k0[i],
-            np/(p->k0[i]), np/(p->k0[i]), 1, np/(p->k0[i]), 1, 1);
+            st/(p->k0[i]), st/(p->k0[i]), 1, st/(p->k0[i]), 1, 1);
 
         /* plan for long-distance butterflies */
         int length = gdim[i]/pdim[i];
-        dfft_create_1d_plan(&(p->plans_long_forward[i]), length, np/length,
-            np/length,1, np/length,1, 0);
-        dfft_create_1d_plan(&(p->plans_long_inverse[i]), length, np/length,
-            np/length,1, np/length,1, 1);
+        dfft_create_1d_plan(&(p->plans_long_forward[i]), length, st/length,
+            st/length,1, st/length,1, 0);
+        dfft_create_1d_plan(&(p->plans_long_inverse[i]), length, st/length,
+            st/length,1, st/length,1, 1);
+
+        size /= p->inembed[i];
+        size *= p->oembed[i];
         }
 
     /* Allocate scratch space */
-    dfft_allocate_aligned_memory(&(p->scratch),sizeof(cpx_t)*np);
+    int scratch_size = 1;
+    for (i = 0; i < ndim; ++i)
+        scratch_size *= ((p->inembed[i] > p->oembed[i]) ? p->inembed[i]  : p->oembed[i]);
+    p->scratch_size = scratch_size;
+
+    dfft_allocate_aligned_memory(&(p->scratch),sizeof(cpx_t)*scratch_size);
+    dfft_allocate_aligned_memory(&(p->scratch_2),sizeof(cpx_t)*scratch_size);
 
     p->input_cyclic = input_cyclic;
     p->output_cyclic = output_cyclic;
@@ -748,25 +791,27 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
     if (out_of_place)
         {
         work = p.scratch;
-        scratch = out; 
-        memcpy(work, in, p.np*sizeof(cpx_t));
+        scratch = p.scratch_2; 
+        memcpy(work, in, p.size_in*sizeof(cpx_t));
         }
     else
         {
         scratch = p.scratch;
+        /*! FIXME need to ensure in buf size >= scratch_size */
         work = in;
         }
 
     if ((!dir && !p.input_cyclic) || (dir && !p.output_cyclic))
         {
         /* redistribution of input */
-        redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx, work, scratch,
-            p.nsend,p.nrecv,p.offset_send,p.offset_recv,
-            dir, p.comm); 
+        redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
+            p.size_in, p.inembed, work, scratch, p.nsend,p.nrecv,
+            p.offset_send,p.offset_recv, dir, p.comm); 
         }
 
     /* multi-dimensional FFT */
-    mpifftnd_dif(p.gdim, p.pdim, p.ndim, p.pidx, dir, work, scratch,
+    mpifftnd_dif(p.gdim, p.pdim, p.ndim, p.pidx, dir,
+        p.size_in,p.inembed,p.oembed, work, scratch,
         dir ? p.plans_short_inverse : p.plans_short_forward,
         dir ? p.plans_long_inverse : p.plans_long_forward,
         p.rho_L, p.rho_pk0, p.rho_Lk0, p.nsend,p.nrecv,
@@ -775,13 +820,13 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
     if ((dir && !p.input_cyclic) || (!dir && !p.input_cyclic))
         {
         /* redistribution of output */
-        redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx, work, scratch,
-            p.nsend,p.nrecv,p.offset_send,p.offset_recv,
-            dir, p.comm); 
+        redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
+            p.size_out,p.oembed, work, scratch, p.nsend,p.nrecv,
+            p.offset_send,p.offset_recv, dir, p.comm); 
         }
 
     if (out_of_place)
-        memcpy(out, work, sizeof(cpx_t)*p.np);
+        memcpy(out, work, sizeof(cpx_t)*p.size_out);
 
     return 0;
     }

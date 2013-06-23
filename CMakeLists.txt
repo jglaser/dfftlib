@@ -31,6 +31,10 @@ include_directories("${PROJECT_BINARY_DIR}")
 
 include_directories("${PROJECT_SOURCE_DIR}/src")
 
+# library source
 add_subdirectory(src)
+
+# unit tests
+add_subdirectory(test)
 
 install(FILES "${PROJECT_BINARY_DIR}/dfft_lib_config.h" DESTINATION "include")
