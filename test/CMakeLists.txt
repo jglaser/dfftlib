@@ -1,14 +1,34 @@
-add_executable(unit_test unit_test.c kiss_fft.cc kiss_fftnd.cc)
-target_link_libraries(unit_test dfft)
+if(ENABLE_HOST)
+    add_executable(unit_test_host unit_test_host.c kiss_fft.c kiss_fftnd.c)
+    target_link_libraries(unit_test_host dfft)
 
-if(MPI_COMPILE_FLAGS)
-  set_target_properties(unit_test PROPERTIES
-  COMPILE_FLAGS "${MPI_COMPILE_FLAGS}")
-endif()
+    include_directories(${MPI_INCLUDE_PATH})
+    if(MPI_COMPILE_FLAGS)
+      set_target_properties(unit_test_host PROPERTIES
+      COMPILE_FLAGS "${MPI_COMPILE_FLAGS}")
+    endif()
 
-if(MPI_LINK_FLAGS)
-    set_target_properties(dfft PROPERTIES
+    if(MPI_LINK_FLAGS)
+    set_target_properties(unit_test_host PROPERTIES
         LINK_FLAGS "${MPI_LINK_FLAGS}")
+    endif()
+    add_test(unit_test_host "unit_test_host")
 endif()
 
-add_test(unit_test "unit_test")
+if(ENABLE_CUDA)
+    add_executable(unit_test_cuda unit_test_cuda.c kiss_fft.c kiss_fftnd.c)
+    target_link_libraries(unit_test_cuda dfft)
+
+    include_directories(${MPI_INCLUDE_PATH})
+    if(MPI_COMPILE_FLAGS)
+      set_target_properties(unit_test_cuda PROPERTIES
+      COMPILE_FLAGS "${MPI_COMPILE_FLAGS}")
+    endif()
+
+    if(MPI_LINK_FLAGS)
+        set_target_properties(unit_test_cuda PROPERTIES
+            LINK_FLAGS "${MPI_LINK_FLAGS}")
+    endif()
+    add_test(unit_test_cuda "unit_test_cuda")
+endif()
+

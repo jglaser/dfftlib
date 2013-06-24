@@ -1,10 +1,13 @@
-#include <stdlib.h>
-#include <string.h>
+#include "dfft_cuda.h"
 
-#include "dfft_host.h"
+#include <cuda_runtime.h>
 
-#include <omp.h>
-#include <math.h>
+#include <mpi.h>
+
+#include "dfft_common.h"
+#include "dfft_cuda.h"
+#include "dfft_cuda.cuh"
+
 
 /*****************************************************************************
  * Implementation of the distributed FFT
@@ -13,7 +16,7 @@
 /*
  * Redistribute from group-cyclic with cycle c0 to cycle c1>=c0
  */
-void dfft_redistribute_block_to_cyclic_1d(
+void dfft_cuda_redistribute_block_to_cyclic_1d(
                   int *dim,
                   int *pdim,
                   int ndim,
@@ -23,8 +26,8 @@ void dfft_redistribute_block_to_cyclic_1d(
                   int* pidx,
                   int size_in,
                   int *embed,
-                  cpx_t *work,
-                  cpx_t *scratch,
+                  cuda_cpx_t *d_work,
+                  cuda_cpx_t *d_scratch,
                   int *dfft_nsend,
                   int *dfft_nrecv,
                   int *dfft_offset_send,
@@ -70,7 +73,6 @@ void dfft_redistribute_block_to_cyclic_1d(
 
     /* initialize send offsets and pack data */
     int j;
-    #pragma omp parallel for private(j,k)
     for (j = 0; j < npackets; ++j)
         {
         int offset = j*size;
@@ -82,13 +84,12 @@ void dfft_redistribute_block_to_cyclic_1d(
             destproc *= pdim[k];
             destproc += ((current_dim == k) ? desti : pidx[k]);
             }
-        dfft_nsend[destproc] = size*sizeof(cpx_t);
-        dfft_offset_send[destproc] = offset*sizeof(cpx_t);
-        int r;
-        for(r=0; r< (size/stride); r++)
-            for (k=0; k < stride; k++)
-               scratch[offset + r*stride+k]=  work[(j+r*ratio)*stride+k]; 
+        dfft_nsend[destproc] = size*sizeof(cuda_cpx_t);
+        dfft_offset_send[destproc] = offset*sizeof(cuda_cpx_t);
         }
+
+    /* pack data */
+    gpu_b2c_pack(npackets*size, ratio, size, npackets, stride, d_work, d_scratch);
 
     /* initialize recv offsets */
     int offset = 0;
@@ -110,17 +111,21 @@ void dfft_redistribute_block_to_cyclic_1d(
             srcproc += ((current_dim == k) ? srci : pidx[k]);
             }
  
-        dfft_nrecv[srcproc] = size*sizeof(cpx_t);
-        dfft_offset_recv[srcproc] = offset*sizeof(cpx_t);
+        dfft_nrecv[srcproc] = size*sizeof(cuda_cpx_t);
+        dfft_offset_recv[srcproc] = offset*sizeof(cuda_cpx_t);
         }
 
     /* synchronize */
     MPI_Barrier(comm);
 
     /* communicate */
-    MPI_Alltoallv(scratch,dfft_nsend, dfft_offset_send, MPI_BYTE,
-                  work, dfft_nrecv, dfft_offset_recv, MPI_BYTE,
+    #ifdef ENABLE_MPI_CUDA
+    MPI_Alltoallv(d_scratch,dfft_nsend, dfft_offset_send, MPI_BYTE,
+                  d_work, dfft_nrecv, dfft_offset_recv, MPI_BYTE,
                   comm);
+    #else
+    // stage
+    #endif
     }
 
 /* Redistribute from group-cyclic with cycle c0 to cycle c0>=c1
@@ -130,7 +135,7 @@ void dfft_redistribute_block_to_cyclic_1d(
  * into a hybrid-distribution, which after the last local ordered
  * DFT becomes the cyclic distribution
  */
-void dfft_redistribute_cyclic_to_block_1d(int *dim,
+void dfft_cuda_redistribute_cyclic_to_block_1d(int *dim,
                      int *pdim,
                      int ndim,
                      int current_dim,
@@ -140,8 +145,8 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
                      int rev,
                      int size_in,
                      int *embed,
-                     cpx_t *work,
-                     cpx_t *scratch,
+                     cuda_cpx_t *d_work,
+                     cuda_cpx_t *d_scratch,
                      int *rho_L,
                      int *rho_pk0,
                      int *dfft_nsend,
@@ -254,19 +259,19 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
             destproc += ((current_dim == k) ? i : pidx[k]);
             }
 
-        dfft_offset_send[destproc] = (send ? (stride*j1*sizeof(cpx_t)) : 0);
+        dfft_offset_send[destproc] = (send ? (stride*j1*sizeof(cuda_cpx_t)) : 0);
         if (rev && (length > c0/c1))
             {
             /* we are directly receving into the work buf */
-            dfft_offset_recv[destproc] = stride*j0_remote*length/c0*sizeof(cpx_t);
+            dfft_offset_recv[destproc] = stride*j0_remote*length/c0*sizeof(cuda_cpx_t);
             }
         else
             {
-            dfft_offset_recv[destproc] = offset*sizeof(cpx_t);
+            dfft_offset_recv[destproc] = offset*sizeof(cuda_cpx_t);
             }
 
-        dfft_nsend[destproc] = send_size*sizeof(cpx_t);
-        dfft_nrecv[destproc] = recv_size*sizeof(cpx_t);
+        dfft_nsend[destproc] = send_size*sizeof(cuda_cpx_t);
+        dfft_nrecv[destproc] = recv_size*sizeof(cuda_cpx_t);
         offset+=(recv ? size : 0);
         }
 
@@ -275,7 +280,6 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
     if (rev && (size > stride))
         {
         offset = 0;
-        /*#pragma omp ... */
         int i;
         for (i = 0; i <p; ++i)
             {
@@ -287,59 +291,42 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
                 destproc += ((current_dim == k) ? i : pidx[k]);
                 }
 
-            int j1_offset = dfft_offset_send[destproc]/sizeof(cpx_t)/stride;
+            int j1_offset = dfft_offset_send[destproc]/sizeof(cuda_cpx_t)/stride;
 
             /* we are sending from a tmp buffer/stride */
-            dfft_offset_send[destproc] = offset*sizeof(cpx_t)*stride;
-            int n = dfft_nsend[destproc]/stride/sizeof(cpx_t);
+            dfft_offset_send[destproc] = offset*sizeof(cuda_cpx_t)*stride;
+            int n = dfft_nsend[destproc]/stride/sizeof(cuda_cpx_t);
             int j;
-            for (j = 0; j < n; j++)
-                for (k = 0; k < stride; ++ k)
-                    scratch[(offset+j)*stride+k] = work[(j1_offset+j*c0)*stride+k];
-
             offset += n;
             }
 
+        /* pack data */
+        gpu_b2c_pack(size_in, c0, size, c0, stride, d_work, d_scratch);
+       
         /* perform communication */
         MPI_Barrier(comm);
-        MPI_Alltoallv(scratch,dfft_nsend, dfft_offset_send, MPI_BYTE,
-                      work, dfft_nrecv, dfft_offset_recv, MPI_BYTE,
+        #ifdef ENABLE_MPI_CUDA
+        MPI_Alltoallv(d_scratch,dfft_nsend, dfft_offset_send, MPI_BYTE,
+                      d_work, dfft_nrecv, dfft_offset_recv, MPI_BYTE,
                       comm);
+        #else
+        //stage
+        #endif
         }
     else
         {
         /* perform communication */
         MPI_Barrier(comm);
-        MPI_Alltoallv(work,dfft_nsend, dfft_offset_send, MPI_BYTE,
-                      scratch, dfft_nrecv, dfft_offset_recv, MPI_BYTE,
+        #ifdef ENABLE_MPI_CUDA
+        MPI_Alltoallv(d_work,dfft_nsend, dfft_offset_send, MPI_BYTE,
+                      d_scratch, dfft_nrecv, dfft_offset_recv, MPI_BYTE,
                       comm);
+        #else
+i       //stage
+        #endif
 
         /* unpack */
-        int r;
-        #pragma omp parallel for private(r)
-        for (r = 0; r < npackets; ++r)
-            {
-            int j1, j1_offset, del;
-            int j0_remote = j0_new_local + r*c1;
-            if (rev && (length >= c0))
-                {
-                j1_offset = j0_remote*length/c0;
-                del = 1;
-                }
-            else
-                {
-                j1_offset = j0_remote/c1;
-                del = c0/c1;
-                }
-            int j;
-            for (j = 0; j < (size/stride); ++j)
-                {
-                j1 = j1_offset + j*del;
-                int k;
-                for (k = 0; k < stride; ++k)
-                    work[j1*stride+k] = scratch[r*size+j*stride+k];
-                }
-            }
+        gpu_c2b_unpack(npackets*size, length, c0, c1, size, j0_new_local, stride, rev, d_work, d_scratch);
         }
     }
 
@@ -348,7 +335,7 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
    input and output are M-cyclic (M=pdim[current_dim])
    (out-of-place version, overwrites input)
    */
-void mpifft1d_dif(int *dim,
+void cuda_mpifft1d_dif(int *dim,
             int *pdim,
             int ndim,
             int current_dim,
@@ -356,10 +343,10 @@ void mpifft1d_dif(int *dim,
             int inverse,
             int size,
             int *embed,
-            cpx_t *in,
-            cpx_t *out,
-            plan_t plan_short,
-            plan_t plan_long,
+            cuda_cpx_t *d_in,
+            cuda_cpx_t *d_out,
+            cuda_plan_t plan_short,
+            cuda_plan_t plan_long,
             int *rho_L,
             int *rho_pk0,
             int *rho_Lk0,
@@ -378,56 +365,32 @@ void mpifft1d_dif(int *dim,
     int c;
     for (c = p; c >1; c /= length)
         {
-#if 1
         /* do local out-of-place place FFT (long-distance butterflies) */
-        dfft_local_1dfft(in, out, plan_long, inverse);
+        dfft_cuda_local_1dfft(d_in, d_out, plan_long, inverse);
 
         /* apply twiddle factors */
         double alpha = ((double)(pidx[current_dim] %c))/(double)c;
-        int j;
-        #pragma omp parallel for private(j)
-        for (j = 0; j < length; j++)
-            {
-            double theta = -(double)2.0 * (double)M_PI * alpha/(double) length;
-            cpx_t w; 
-            RE(w) = cos((double)j*theta);
-            IM(w) = sin((double)j*theta);
 
-            double sign = ((inverse) ? (-1.0) : 1.0);
-            IM(w) *=sign;
-
-            int r;
-            for (r = 0; r < stride; ++r) 
-                {
-                cpx_t x = out[j*stride+r];
-                cpx_t y;
-                RE(y) = RE(x) * RE(w) - IM(x) * IM(w);
-                IM(y) = RE(x) * IM(w) + IM(x) * RE(w);
-
-                in[j*stride+r] = y;
-                }
-            }
-        int rev = 1;
-#else
-        int rev = 0;
-#endif
+        gpu_twiddle(size, length, stride, alpha, d_out, d_in, inverse);
 
         /* in-place redistribute from group-cyclic c -> c1 */
+        int rev = 1;
         int c1 = ((c > length) ? (c/length) : 1);
-        dfft_redistribute_cyclic_to_block_1d(dim,pdim,ndim,current_dim, c, c1,
-            pidx, rev, size, embed, in,out,rho_L,rho_pk0,
+        dfft_cuda_redistribute_cyclic_to_block_1d(dim,pdim,ndim,current_dim,
+            c, c1, pidx, rev, size, embed, d_in,d_out,rho_L,rho_pk0,
             dfft_nsend,dfft_nrecv,dfft_offset_send,dfft_offset_recv,
             comm);
         }
 
     /* perform remaining short-distance butterflies,
      * out-of-place 1d FFT */
-    dfft_local_1dfft(in, out, plan_short,inverse);
+    dfft_cuda_local_1dfft(d_in, d_out, plan_short,inverse);
     } 
 
-/* n-dimensional fft routine (in-place)
+/*
+ * n-dimensional fft routine (in-place)
  */
-void mpifftnd_dif(int *dim,
+void cuda_mpifftnd_dif(int *dim,
             int *pdim,
             int ndim,
             int* pidx,
@@ -435,10 +398,10 @@ void mpifftnd_dif(int *dim,
             int size_in,
             int *inembed,
             int *oembed,
-            cpx_t *work,
-            cpx_t *scratch,
-            plan_t *plans_short,
-            plan_t *plans_long,
+            cuda_cpx_t *d_work,
+            cuda_cpx_t *d_scratch,
+            cuda_plan_t *plans_short,
+            cuda_plan_t *plans_long,
             int **rho_L,
             int **rho_pk0,
             int **rho_Lk0,
@@ -453,8 +416,8 @@ void mpifftnd_dif(int *dim,
     for (current_dim = 0; current_dim < ndim; ++current_dim)
         {
         /* assume input in local column major */
-        mpifft1d_dif(dim, pdim,ndim,current_dim,pidx, inv,
-            size, inembed, work, scratch, plans_short[current_dim],
+        cuda_mpifft1d_dif(dim, pdim,ndim,current_dim,pidx, inv,
+            size, inembed, d_work, d_scratch, plans_short[current_dim],
             plans_long[current_dim], rho_L[current_dim],
             rho_pk0[current_dim],rho_Lk0[current_dim],
             dfft_nsend,dfft_nrecv,dfft_offset_send,dfft_offset_recv,
@@ -464,18 +427,7 @@ void mpifftnd_dif(int *dim,
         int stride = size/inembed[current_dim];
 
         /* transpose local matrix */
-        int i;
-        #pragma omp parallel for private(i)
-        for (i = 0; i < l; ++i)
-            {
-            int j;
-            for (j = 0; j < stride; ++j)
-                {
-                int gidx = j+i*stride;
-                int new_idx = j*oembed[current_dim]+i;
-                work[new_idx] = scratch[gidx];
-                }
-            }
+        gpu_transpose(size,l,stride, oembed[current_dim],d_scratch, d_work);
 
         /* update size */
         size *= oembed[current_dim];
@@ -483,14 +435,14 @@ void mpifftnd_dif(int *dim,
         }
     }
 
-void redistribute_nd(int *dim,
+void cuda_redistribute_nd(int *dim,
             int *pdim,
             int ndim,
             int* pidx,
             int size,
             int *embed,
-            cpx_t *work,
-            cpx_t *scratch,
+            cuda_cpx_t *d_work,
+            cuda_cpx_t *d_scratch,
             int *dfft_nsend,
             int *dfft_nrecv,
             int *dfft_offset_send,
@@ -498,43 +450,32 @@ void redistribute_nd(int *dim,
             int c2b,
             MPI_Comm comm)
     {
-    cpx_t *cur_work =work;
-    cpx_t *cur_scratch =scratch;
+    cuda_cpx_t *cur_work =d_work;
+    cuda_cpx_t *cur_scratch =d_scratch;
 
     int current_dim;
     for (current_dim = 0; current_dim < ndim; ++current_dim)
         {
         /* redistribute along one dimension (in-place) */
         if (!c2b)
-            dfft_redistribute_block_to_cyclic_1d(dim, pdim, ndim, current_dim,
-                1, pdim[current_dim], pidx, size, embed,
+            dfft_cuda_redistribute_block_to_cyclic_1d(dim, pdim, ndim,
+                current_dim, 1, pdim[current_dim], pidx, size, embed,
                 cur_work, cur_scratch, dfft_nsend,dfft_nrecv,
                 dfft_offset_send, dfft_offset_recv, comm);
         else
-            dfft_redistribute_cyclic_to_block_1d(dim, pdim, ndim, current_dim,
-                pdim[current_dim], 1, pidx, 0, size, embed, cur_work,
-                cur_scratch, NULL, NULL, dfft_nsend,
+            dfft_cuda_redistribute_cyclic_to_block_1d(dim, pdim, ndim,
+                current_dim, pdim[current_dim], 1, pidx, 0, size, embed,
+                cur_work, cur_scratch, NULL, NULL, dfft_nsend,
                 dfft_nrecv, dfft_offset_send, dfft_offset_recv, comm);
         
         int l = dim[current_dim]/pdim[current_dim];
         int stride = size/embed[current_dim];
 
-        /* transpose local matrix from column major to row major */
-        int i;
-        #pragma omp parallel for private(i)
-        for (i = 0; i < l; ++i)
-            {
-            int j;
-            for (j = 0; j < stride; ++j)
-                {
-                int gidx = j+i*stride;
-                int new_idx = j*embed[current_dim]+i;
-                cur_scratch[new_idx] =cur_work[gidx];
-                }
-            }
+        /* transpose local matrix */
+        gpu_transpose(size,l,stride, embed[current_dim],cur_work, cur_scratch);
 
         /* swap buffers */
-        cpx_t *tmp;        
+        cuda_cpx_t *tmp;        
         tmp = cur_scratch;
         cur_scratch = cur_work;
         cur_work = tmp;
@@ -542,7 +483,7 @@ void redistribute_nd(int *dim,
 
     if (ndim % 2)
         {
-        memcpy(work, scratch, sizeof(cpx_t)*size);
+        cudaMemcpy(d_work, d_scratch, sizeof(cuda_cpx_t)*size,cudaMemcpyDefault);
         }
     }
 
@@ -550,41 +491,38 @@ void redistribute_nd(int *dim,
 /*****************************************************************************
  * Distributed FFT interface
  *****************************************************************************/
-int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
+int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan p)
     {
-    /* only works on host plans */
-    if (p.device) return 2;
+    int out_of_place = (d_in == d_out) ? 0 : 1;
 
-    int out_of_place = (in == out) ? 0 : 1;
-
-    cpx_t *scratch, *work;
+    cuda_cpx_t *d_scratch, *d_work;
 
     if (out_of_place)
         {
-        work = p.scratch;
-        scratch = p.scratch_2; 
-        memcpy(work, in, p.size_in*sizeof(cpx_t));
+        d_work = p.d_scratch;
+        d_scratch = p.d_scratch_2; 
+        cudaMemcpy(d_work, d_in, p.size_in*sizeof(cuda_cpx_t),cudaMemcpyDefault);
         }
     else
         {
-        scratch = p.scratch;
+        d_scratch = p.d_scratch;
         /*! FIXME need to ensure in buf size >= scratch_size */
-        work = in;
+        d_work = d_in;
         }
 
     if ((!dir && !p.input_cyclic) || (dir && !p.output_cyclic))
         {
         /* redistribution of input */
-        redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
-            p.size_in, p.inembed, work, scratch, p.nsend,p.nrecv,
+        cuda_redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
+            p.size_in, p.inembed, d_work, d_scratch, p.nsend,p.nrecv,
             p.offset_send,p.offset_recv, 0, p.comm); 
         }
 
     /* multi-dimensional FFT */
-    mpifftnd_dif(p.gdim, p.pdim, p.ndim, p.pidx, dir,
-        p.size_in,p.inembed,p.oembed, work, scratch,
-        dir ? p.plans_short_inverse : p.plans_short_forward,
-        dir ? p.plans_long_inverse : p.plans_long_forward,
+    cuda_mpifftnd_dif(p.gdim, p.pdim, p.ndim, p.pidx, dir,
+        p.size_in,p.inembed,p.oembed, d_work, d_scratch,
+        dir ? p.cuda_plans_short_inverse : p.cuda_plans_short_forward,
+        dir ? p.cuda_plans_long_inverse : p.cuda_plans_long_forward,
         p.rho_L, p.rho_pk0, p.rho_Lk0, p.nsend,p.nrecv,
         p.offset_send,p.offset_recv, p.comm);
 
@@ -592,28 +530,29 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
     if ((dir && !p.input_cyclic) || (!dir && !p.input_cyclic))
         {
         /* redistribution of output */
-        redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
-            p.size_out,p.oembed, work, scratch, p.nsend,p.nrecv,
+        cuda_redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
+            p.size_out,p.oembed, d_work, d_scratch, p.nsend,p.nrecv,
             p.offset_send,p.offset_recv, 1, p.comm); 
         }
 
     if (out_of_place)
-        memcpy(out, work, sizeof(cpx_t)*p.size_out);
+        cudaMemcpy(d_out, d_work, sizeof(cuda_cpx_t)*p.size_out,cudaMemcpyDefault);
 
     return 0;
     }
 
-int dfft_create_plan(dfft_plan *p,
+int dfft_cuda_create_plan(dfft_plan *p,
     int ndim, int *gdim,
     int *inembed, int *oembed, 
     int *pdim, int input_cyclic, int output_cyclic,
     MPI_Comm comm)
     {
-    return dfft_create_plan_common(p, ndim, gdim, inembed,
-        oembed, pdim, input_cyclic, output_cyclic, comm, 0);
+    return dfft_create_plan_common(p, ndim, gdim, inembed, oembed,
+        pdim, input_cyclic, output_cyclic, comm, 1);
+    } 
+
+void dfft_cuda_destroy_plan(dfft_plan plan)
+    {
+    dfft_destroy_plan_common(plan, 1);
     }
 
-void dfft_destroy_plan(dfft_plan plan)
-    {
-    dfft_destroy_plan_common(plan, 0);
-    }

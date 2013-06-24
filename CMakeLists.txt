@@ -1,4 +1,4 @@
-cmake_minimum_required (VERSION 2.6)
+cmake_minimum_required (VERSION 2.8)
 project (dfftlib)
 
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}" ${CMAKE_MODULE_PATH})
@@ -11,15 +11,26 @@ if (NOT CMAKE_BUILD_TYPE)
 endif()
 
 find_package(MPI REQUIRED)
-include(FindLocalFFT.txt)
+include(FindLocalFFT.cmake)
 
-FIND_PACKAGE( OpenMP REQUIRED)
+# configure OpenMP support
+find_package(OpenMP)
 if(OPENMP_FOUND)
 message("OpenMP FOUND")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
 endif()
+
+find_package(CUDA)
+if(CUDA_FOUND)
+    set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS};-arch=sm_20")
+    option(ENABLE_CUDA "CUDA support" ON)
+else()
+    option(ENABLE_CUDA "CUDA support" OFF)
+endif()
+
+include(CUDA_MPI.cmake)
 
 configure_file (
   "${PROJECT_SOURCE_DIR}/src/dfft_lib_config.h.in"

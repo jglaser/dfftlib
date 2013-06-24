@@ -1,33 +1,43 @@
 /*
- * Distributed FFT using CUDA
+ * Distributed FFT on the host
  */
 
-#ifdef CUFFT /* CUFFT, single precision */
-#include "cufft_interface.h"
-typedef cufftComplex cuda_cpx_t;
-typedef cufftHandle cuda_plan_t;
+#ifndef __DFFT_CUDA_H__
+#define __DFFT_CUDA_H__
+
+#include <dfft_lib_config.h>
+
+#ifdef ENABLE_CUDA
+#include "dfft_common.h"
+
+#ifndef NVCC
+
+#ifdef __cplusplus
+#define EXTERN_DFFT extern "C"
+#else
+#define EXTERN_DFFT
 #endif
 
-/* Data structures needed for a distributed FFT
+/* 
+ * Create a device plan for distributed FFT
  */
-struct 
-    {
-    int ndim;            /* dimensionality */
-    int *gdim;           /* global input array dimensions */
-    int *inembed;        /* embedding, per dimension, of input array */
-    int istride;         /* stride of input array */
-    int idist;           /* number of elements between batches (input array) */
-    int *oembed;         /* embedding, per dimension, of output array */
-    int ostride;         /* stride of input array */
-    int odist;           /* number of elements between batches (output array) */
- 
-    cuda_plan_t **plans_short_forward; /* short distance butterflies, forward dir */
-    cuda_plan_t **plans_long_forward;  /* long distance butterflies, inverse dir */
-    cuda_plan_t **plans_short_inverse; /* short distance butterflies, inverse dir */
-    cuda_plan_t **plans_long_inverse;  /* long distance butterflies, inverse dir */
+EXTERN_DFFT int dfft_cuda_create_plan(dfft_plan *p,
+    int ndim, int *gdim,
+    int *inembed, int *oembed, 
+    int *pdim, int input_cyclic, int output_cyclic,
+    MPI_Comm comm);
 
-    int **rho_L;          /* bit reversal lookup, length L, per dimension */   
-    int **rho_k0;         /* bit reversal lookup, length L, per dimension */   
-    int **rho_pk0;        /* bit reversal lookup, length L, per dimension */   
+/*
+ * Destroy a device plan
+ */
+EXTERN_DFFT void dfft_cuda_destroy_plan(dfft_plan plan);
 
-    } dfft_cuda_plan;
+/*
+ * Execute the parallel FFT on the device
+ */
+EXTERN_DFFT int dfft_cuda_execute(cuda_cpx_t *in, cuda_cpx_t *out, int dir, dfft_plan p);
+
+#undef EXTERN_DFFT
+#endif
+#endif // ENABLE_CUDA
+#endif

@@ -1,6 +1,25 @@
 include_directories(${MPI_INCLUDE_PATH})
-add_library (dfft SHARED dfft_host.c) 
-target_link_libraries(dfft ${MPI_LIBRARIES} ${LOCAL_FFT_LIBRARIES})
+
+
+if(ENABLE_CUDA)
+    # CUFFT is default for CUDA
+    set(CUDA_SOURCES cufft_single_interface.c)
+
+    set(CUDA_SOURCES dfft_cuda.c ${CUDA_SOURCES})
+    cuda_compile(DFFT_CUDA_O dfft_cuda.cu SHARED)   
+    set(CUDA_OBJECTS ${DFFT_CUDA_O})
+    set(CUDA_LIBS ${CUDA_CUDART_LIBRARY} ${CUDA_cufft_LIBRARY})
+endif()
+
+if(ENABLE_HOST)
+    # MKL is default for host
+    set(HOST_SOURCES mkl_single_interface.c)
+
+    set(HOST_SOURCES dfft_host.c ${HOST_SOURCES})
+endif()
+
+add_library (dfft SHARED dfft_common.c ${HOST_SOURCES} ${CUDA_SOURCES} ${CUDA_OBJECTS}) 
+target_link_libraries(dfft ${MPI_LIBRARIES} ${LOCAL_FFT_LIBRARIES} ${CUDA_LIBS})
 
 if(MPI_COMPILE_FLAGS)
   set_target_properties(dfft PROPERTIES
