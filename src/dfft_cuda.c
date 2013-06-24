@@ -4,6 +4,9 @@
 
 #include <mpi.h>
 
+#include <stdlib.h>
+#include <unistd.h>
+
 #include "dfft_common.h"
 #include "dfft_cuda.h"
 #include "dfft_cuda.cuh"
@@ -28,6 +31,8 @@ void dfft_cuda_redistribute_block_to_cyclic_1d(
                   int *embed,
                   cuda_cpx_t *d_work,
                   cuda_cpx_t *d_scratch,
+                  cuda_cpx_t *h_stage_in,
+                  cuda_cpx_t *h_stage_out,
                   int *dfft_nsend,
                   int *dfft_nrecv,
                   int *dfft_offset_send,
@@ -124,7 +129,15 @@ void dfft_cuda_redistribute_block_to_cyclic_1d(
                   d_work, dfft_nrecv, dfft_offset_recv, MPI_BYTE,
                   comm);
     #else
-    // stage
+    // stage into host buf
+    cudaMemcpy(h_stage_in, d_scratch, sizeof(cuda_cpx_t)*npackets*size,cudaMemcpyDefault); 
+
+    MPI_Alltoallv(h_stage_in,dfft_nsend, dfft_offset_send, MPI_BYTE,
+                  h_stage_out, dfft_nrecv, dfft_offset_recv, MPI_BYTE,
+                  comm);
+
+    // copy back received data
+    cudaMemcpy(d_work,h_stage_out, sizeof(cuda_cpx_t)*size_in,cudaMemcpyDefault); 
     #endif
     }
 
@@ -147,6 +160,8 @@ void dfft_cuda_redistribute_cyclic_to_block_1d(int *dim,
                      int *embed,
                      cuda_cpx_t *d_work,
                      cuda_cpx_t *d_scratch,
+                     cuda_cpx_t *h_stage_in,
+                     cuda_cpx_t *h_stage_out,
                      int *rho_L,
                      int *rho_pk0,
                      int *dfft_nsend,
@@ -310,7 +325,15 @@ void dfft_cuda_redistribute_cyclic_to_block_1d(int *dim,
                       d_work, dfft_nrecv, dfft_offset_recv, MPI_BYTE,
                       comm);
         #else
-        //stage
+        // stage into host buf
+        cudaMemcpy(h_stage_in, d_scratch, sizeof(cuda_cpx_t)*length*stride,cudaMemcpyDefault); 
+
+        MPI_Alltoallv(h_stage_in,dfft_nsend, dfft_offset_send, MPI_BYTE,
+                      h_stage_out, dfft_nrecv, dfft_offset_recv, MPI_BYTE,
+                      comm);
+
+        // copy back received data
+        cudaMemcpy(d_work,h_stage_out, sizeof(cuda_cpx_t)*npackets*size,cudaMemcpyDefault); 
         #endif
         }
     else
@@ -322,7 +345,15 @@ void dfft_cuda_redistribute_cyclic_to_block_1d(int *dim,
                       d_scratch, dfft_nrecv, dfft_offset_recv, MPI_BYTE,
                       comm);
         #else
-i       //stage
+        // stage into host buf
+        cudaMemcpy(h_stage_in, d_work, sizeof(cuda_cpx_t)*size_in,cudaMemcpyDefault); 
+
+        MPI_Alltoallv(h_stage_in,dfft_nsend, dfft_offset_send, MPI_BYTE,
+                      h_stage_out, dfft_nrecv, dfft_offset_recv, MPI_BYTE,
+                      comm);
+
+        // copy back received data
+        cudaMemcpy(d_scratch,h_stage_out, sizeof(cuda_cpx_t)*npackets*size,cudaMemcpyDefault); 
         #endif
 
         /* unpack */
@@ -345,6 +376,8 @@ void cuda_mpifft1d_dif(int *dim,
             int *embed,
             cuda_cpx_t *d_in,
             cuda_cpx_t *d_out,
+            cuda_cpx_t *h_stage_in,
+            cuda_cpx_t *h_stage_out,
             cuda_plan_t plan_short,
             cuda_plan_t plan_long,
             int *rho_L,
@@ -377,9 +410,9 @@ void cuda_mpifft1d_dif(int *dim,
         int rev = 1;
         int c1 = ((c > length) ? (c/length) : 1);
         dfft_cuda_redistribute_cyclic_to_block_1d(dim,pdim,ndim,current_dim,
-            c, c1, pidx, rev, size, embed, d_in,d_out,rho_L,rho_pk0,
-            dfft_nsend,dfft_nrecv,dfft_offset_send,dfft_offset_recv,
-            comm);
+            c, c1, pidx, rev, size, embed, d_in,d_out,h_stage_in, h_stage_out,
+            rho_L,rho_pk0, dfft_nsend,dfft_nrecv,dfft_offset_send,
+            dfft_offset_recv, comm);
         }
 
     /* perform remaining short-distance butterflies,
@@ -400,6 +433,8 @@ void cuda_mpifftnd_dif(int *dim,
             int *oembed,
             cuda_cpx_t *d_work,
             cuda_cpx_t *d_scratch,
+            cuda_cpx_t *h_stage_in,
+            cuda_cpx_t *h_stage_out,
             cuda_plan_t *plans_short,
             cuda_plan_t *plans_long,
             int **rho_L,
@@ -417,7 +452,8 @@ void cuda_mpifftnd_dif(int *dim,
         {
         /* assume input in local column major */
         cuda_mpifft1d_dif(dim, pdim,ndim,current_dim,pidx, inv,
-            size, inembed, d_work, d_scratch, plans_short[current_dim],
+            size, inembed, d_work, d_scratch,h_stage_in, h_stage_out,
+            plans_short[current_dim],
             plans_long[current_dim], rho_L[current_dim],
             rho_pk0[current_dim],rho_Lk0[current_dim],
             dfft_nsend,dfft_nrecv,dfft_offset_send,dfft_offset_recv,
@@ -443,6 +479,8 @@ void cuda_redistribute_nd(int *dim,
             int *embed,
             cuda_cpx_t *d_work,
             cuda_cpx_t *d_scratch,
+            cuda_cpx_t *h_stage_in,
+            cuda_cpx_t *h_stage_out,
             int *dfft_nsend,
             int *dfft_nrecv,
             int *dfft_offset_send,
@@ -460,13 +498,15 @@ void cuda_redistribute_nd(int *dim,
         if (!c2b)
             dfft_cuda_redistribute_block_to_cyclic_1d(dim, pdim, ndim,
                 current_dim, 1, pdim[current_dim], pidx, size, embed,
-                cur_work, cur_scratch, dfft_nsend,dfft_nrecv,
+                cur_work, cur_scratch, h_stage_in, h_stage_out,
+                dfft_nsend,dfft_nrecv,
                 dfft_offset_send, dfft_offset_recv, comm);
         else
             dfft_cuda_redistribute_cyclic_to_block_1d(dim, pdim, ndim,
                 current_dim, pdim[current_dim], 1, pidx, 0, size, embed,
-                cur_work, cur_scratch, NULL, NULL, dfft_nsend,
-                dfft_nrecv, dfft_offset_send, dfft_offset_recv, comm);
+                cur_work, cur_scratch, h_stage_in, h_stage_out,
+                NULL, NULL, dfft_nsend, dfft_nrecv, dfft_offset_send,
+                dfft_offset_recv, comm);
         
         int l = dim[current_dim]/pdim[current_dim];
         int stride = size/embed[current_dim];
@@ -514,13 +554,15 @@ int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan p)
         {
         /* redistribution of input */
         cuda_redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
-            p.size_in, p.inembed, d_work, d_scratch, p.nsend,p.nrecv,
-            p.offset_send,p.offset_recv, 0, p.comm); 
+            p.size_in, p.inembed, d_work, d_scratch, p.h_stage_in,
+            p.h_stage_out, p.nsend,p.nrecv, p.offset_send,
+            p.offset_recv, 0, p.comm); 
         }
 
     /* multi-dimensional FFT */
     cuda_mpifftnd_dif(p.gdim, p.pdim, p.ndim, p.pidx, dir,
         p.size_in,p.inembed,p.oembed, d_work, d_scratch,
+        p.h_stage_in, p.h_stage_out,
         dir ? p.cuda_plans_short_inverse : p.cuda_plans_short_forward,
         dir ? p.cuda_plans_long_inverse : p.cuda_plans_long_forward,
         p.rho_L, p.rho_pk0, p.rho_Lk0, p.nsend,p.nrecv,
@@ -531,8 +573,8 @@ int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan p)
         {
         /* redistribution of output */
         cuda_redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
-            p.size_out,p.oembed, d_work, d_scratch, p.nsend,p.nrecv,
-            p.offset_send,p.offset_recv, 1, p.comm); 
+            p.size_out,p.oembed, d_work, d_scratch, p.h_stage_in, p.h_stage_out,
+            p.nsend,p.nrecv, p.offset_send,p.offset_recv, 1, p.comm); 
         }
 
     if (out_of_place)
@@ -547,12 +589,33 @@ int dfft_cuda_create_plan(dfft_plan *p,
     int *pdim, int input_cyclic, int output_cyclic,
     MPI_Comm comm)
     {
-    return dfft_create_plan_common(p, ndim, gdim, inembed, oembed,
+    int res = dfft_create_plan_common(p, ndim, gdim, inembed, oembed,
         pdim, input_cyclic, output_cyclic, comm, 1);
+
+    #ifndef ENABLE_MPI_CUDA
+    /* allocate staging bufs */
+    /* we need to use posix_memalign/cudaHostRegister instead
+     * of cudaHostAlloc, because cudaHostAlloc doesn't have hooks
+     * in the MPI library, and using it would lead to data corruption
+     */
+    int size = p->scratch_size*sizeof(cuda_cpx_t);
+    int page_size = getpagesize();
+    size = ((size + page_size - 1) / page_size) * page_size;
+    posix_memalign((void **)&(p->h_stage_in),page_size,size);
+    posix_memalign((void **)&(p->h_stage_out),page_size,size);
+    cudaHostRegister(p->h_stage_in, size, cudaHostAllocDefault);
+    cudaHostRegister(p->h_stage_out, size, cudaHostAllocDefault);
+    #endif
     } 
 
 void dfft_cuda_destroy_plan(dfft_plan plan)
     {
     dfft_destroy_plan_common(plan, 1);
+    #ifndef ENABLE_MPI_CUDA
+    cudaHostUnregister(plan.h_stage_in);
+    cudaHostUnregister(plan.h_stage_out);
+    free(plan.h_stage_in);
+    free(plan.h_stage_out);
+    #endif
     }
 

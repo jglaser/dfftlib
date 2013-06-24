@@ -55,6 +55,8 @@ typedef struct
     #ifdef ENABLE_CUDA
     cuda_cpx_t *d_scratch;   /* Scratch array */
     cuda_cpx_t *d_scratch_2; /* Scratch array */
+    cuda_cpx_t *h_stage_in;  /* Staging array for MPI calls */
+    cuda_cpx_t *h_stage_out; /* Staging array for MPI calls */
     #endif 
 
     int scratch_size;     /* Size of scratch array */
