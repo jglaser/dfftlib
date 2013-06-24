@@ -7,7 +7,7 @@
  */
 
 /* out-of-place transform */
-void four1(double2 *in, double2 *out, const int n, const int isign, const int istride, const int ostride) {
+void four1(cpxdbl *in, cpxdbl *out, const int n, const int isign, const int istride, const int ostride) {
 	int nn,mmax,m,j,istep,i;
 	double wtemp,wr,wpr,wpi,wi,theta,tempr,tempi;
 
@@ -22,7 +22,7 @@ void four1(double2 *in, double2 *out, const int n, const int isign, const int is
         {
         if (j > i)
             {
-            double2 tmp = out[(i/2)*ostride];
+            cpxdbl tmp = out[(i/2)*ostride];
             out[(i/2)*ostride] = out[(j/2)*ostride];
             out[(j/2)*ostride] = tmp;
             }
@@ -69,7 +69,7 @@ void four1(double2 *in, double2 *out, const int n, const int isign, const int is
         }
     }
 
-void radix2_fft(double2 *in, double2 *out, const int n, const int isign, bare_fft_plan plan)
+void radix2_fft(cpxdbl *in, cpxdbl *out, const int n, const int isign, bare_fft_plan plan)
     {
     int i;
     for (i = 0; i < plan.howmany; ++i)

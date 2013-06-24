@@ -3,6 +3,7 @@
  */
 
 #include <dfft_lib_config.h>
+#ifndef NVCC
 #ifdef ENABLE_HOST
 /* Local FFT library for host DFFT */
 #if (LOCAL_FFT_LIB == LOCAL_LIB_MKL)
@@ -13,6 +14,7 @@
 #include "bare_fft_interface.h"
 #endif
 #endif /* ENABLE_HOST */
+#endif /* NVCC */
 
 #ifdef ENABLE_CUDA
 /* CUFFT is the default library */
