@@ -50,7 +50,10 @@ int dfft_create_plan_common(dfft_plan *p,
 
     MPI_Comm_rank(comm,&s);
     MPI_Comm_size(comm,&nump);
-    
+  
+    /* number of processor must be power of two */
+    if (nump & (nump-1)) return 4; 
+
     p->pdim = malloc(ndim*sizeof(int));
     p->gdim = malloc(ndim*sizeof(int));
     p->pidx = malloc(ndim*sizeof(int));
@@ -64,6 +67,10 @@ int dfft_create_plan_common(dfft_plan *p,
     for (i = 0; i < ndim; i++)
         {
         p->gdim[i] = gdim[i];
+       
+        /* Every dimension must be a power of two */
+        if (gdim[i] & (gdim[i]-1)) return 5; 
+
         p->pdim[i] = pdim[i];
         }
 
@@ -125,10 +132,6 @@ int dfft_create_plan_common(dfft_plan *p,
     /* local problem size */
     int size_in = gdim[0]/pdim[0];
     int size_out = gdim[0]/pdim[0];
-    int np = 1;
-
-    for (i = 0; i < ndim; ++i)
-        np *= gdim[i]/pdim[i];
 
     for (i = 1; i < ndim; ++i)
         {

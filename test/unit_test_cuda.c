@@ -196,6 +196,7 @@ void test_distributed_fft_nd(int nd)
         if (s == 0 && i == 0)
             {
             CHECK_SMALL(CUDA_RE(in_2_h[i]), abs_tol);
+            CHECK_SMALL(CUDA_IM(in_2_h[i]), abs_tol);
             }
         else
             {

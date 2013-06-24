@@ -588,7 +588,6 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
         p.rho_L, p.rho_pk0, p.rho_Lk0, p.nsend,p.nrecv,
         p.offset_send,p.offset_recv, p.comm);
 
-    int c2b = ((!dir && p.input_cyclic) || (dir && !p.output_cyclic)) ? 1 : 0;
     if ((dir && !p.input_cyclic) || (!dir && !p.input_cyclic))
         {
         /* redistribution of output */

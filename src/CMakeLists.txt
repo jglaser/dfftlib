@@ -12,8 +12,11 @@ if(ENABLE_CUDA)
 endif()
 
 if(ENABLE_HOST)
-    # MKL is default for host
-    set(HOST_SOURCES mkl_single_interface.c)
+    if(LOCAL_FFT_LIB STREQUAL "LOCAL_LIB_MKL")
+        set(HOST_SOURCES mkl_single_interface.c)
+    elseif(LOCAL_FFT_LIB STREQUAL "LOCAL_LIB_BARE")
+        set(HOST_SOURCES bare_fft_interface.c bare_fft.c)
+    endif()
 
     set(HOST_SOURCES dfft_host.c ${HOST_SOURCES})
 endif()

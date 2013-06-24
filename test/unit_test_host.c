@@ -156,6 +156,7 @@ void test_distributed_fft_nd(int nd)
         if (s == 0 && i == 0)
             {
             CHECK_SMALL(RE(in_2[i]), abs_tol);
+            CHECK_SMALL(IM(in_2[i]), abs_tol);
             }
         else
             {
