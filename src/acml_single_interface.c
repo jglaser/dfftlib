@@ -47,7 +47,8 @@ int dfft_create_1d_plan(
 
 int dfft_allocate_aligned_memory(cpx_t **ptr, size_t size)
     {
-    *ptr = (cpx_t *) malloc(size);
+    /* SSE register size is 16 */
+    posix_memalign((void **)ptr,16,  size);
     return 0;
     }
 

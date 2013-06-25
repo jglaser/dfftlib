@@ -6,6 +6,8 @@
 
 #include <stdlib.h>
 
+//#define FFT1D_SUPPORTS_THREADS
+
 typedef struct { float real, imag; } float2_dfft;
 typedef float2_dfft cpx_t;
 

@@ -223,17 +223,24 @@ int dfft_create_plan_common(dfft_plan *p,
         if (!device)
             {
             #ifdef ENABLE_HOST
+            int howmany = 1;
+            #ifdef FFT1D_SUPPORTS_THREADS
+            howmany = st/(p->k0[i]);
+            #endif
             dfft_create_1d_plan(&(p->plans_short_forward[i]),p->k0[i],
-                st/(p->k0[i]), st/(p->k0[i]), 1, st/(p->k0[i]), 1, 0);
+                howmany, st/(p->k0[i]), 1, st/(p->k0[i]), 1, 0);
             dfft_create_1d_plan(&(p->plans_short_inverse[i]),p->k0[i],
-                st/(p->k0[i]), st/(p->k0[i]), 1, st/(p->k0[i]), 1, 1);
+                howmany, st/(p->k0[i]), 1, st/(p->k0[i]), 1, 1);
 
             /* plan for long-distance butterflies */
             int length = gdim[i]/pdim[i];
+            #ifdef FFT1D_SUPPORTS_THREADS
+            howmany = st/length;
+            #endif
             dfft_create_1d_plan(&(p->plans_long_forward[i]), length,
-                st/length, st/length,1, st/length,1, 0);
+                howmany, st/length,1, st/length,1, 0);
             dfft_create_1d_plan(&(p->plans_long_inverse[i]), length,
-                st/length, st/length,1, st/length,1, 1);
+                howmany, st/length,1, st/length,1, 1);
             #else
             return 3;
             #endif
