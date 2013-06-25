@@ -40,7 +40,7 @@ void bitrev_init(int n, int *rho)
 int dfft_create_plan_common(dfft_plan *p,
     int ndim, int *gdim,
     int *inembed, int *oembed, 
-    int *pdim, int *pidx,
+    int *pdim, int *pidx, int row_m,
     int input_cyclic, int output_cyclic,
     MPI_Comm comm,
     int device)
@@ -293,6 +293,8 @@ int dfft_create_plan_common(dfft_plan *p,
     #ifdef ENABLE_CUDA
     p->check_cuda_errors = 0;
     #endif
+
+    p->row_m = row_m;
     return 0;
     } 
 

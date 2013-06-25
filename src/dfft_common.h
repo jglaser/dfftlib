@@ -75,15 +75,16 @@ typedef struct
     #ifdef ENABLE_CUDA
     int check_cuda_errors; /* == 1 if we are checking errors */
     #endif
+
+    int row_m;            /* ==1 If we are using row-major procesor id mapping */
     } dfft_plan;
 
 /*
  * Create a plan for distributed FFT (internal interface)
  */
 int dfft_create_plan_common(dfft_plan *plan,
-    int ndim, int *gdim,
-    int *inembed, int *ombed, 
-    int *pdim, int *pidx, int input_cyclic, int output_cyclic,
+    int ndim, int *gdim, int *inembed, int *ombed, 
+    int *pdim, int *pidx, int row_m, int input_cyclic, int output_cyclic,
     MPI_Comm comm,
     int device);
 

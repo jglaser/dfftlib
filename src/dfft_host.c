@@ -29,7 +29,8 @@ void dfft_redistribute_block_to_cyclic_1d(
                   int *dfft_nrecv,
                   int *dfft_offset_send,
                   int *dfft_offset_recv,
-                  MPI_Comm comm)
+                  MPI_Comm comm,
+                  int row_m)
     {
     /* exit early if nothing needs to be done */
     if (c0 == c1) return;
@@ -77,10 +78,21 @@ void dfft_redistribute_block_to_cyclic_1d(
         int jglob = j2*c0*length + j * c0 + j0;
         int desti = (jglob/(c1*length))*c1+ jglob%c1;
         int destproc = 0;
-        for (k = 0; k < ndim; ++k)
+        if (row_m)
             {
-            destproc *= pdim[k];
-            destproc += ((current_dim == k) ? desti : pidx[k]);
+            for (k = ndim-1; k >=0 ;--k)
+                {
+                destproc *= pdim[k];
+                destproc += ((current_dim == k) ? desti : pidx[k]);
+                }
+            }
+        else
+            {
+            for (k = 0; k < ndim; ++k)
+                {
+                destproc *= pdim[k];
+                destproc += ((current_dim == k) ? desti : pidx[k]);
+                }
             }
         dfft_nsend[destproc] = size*sizeof(cpx_t);
         dfft_offset_send[destproc] = offset*sizeof(cpx_t);
@@ -104,10 +116,21 @@ void dfft_redistribute_block_to_cyclic_1d(
         int srci = (jglob/(c0*length))*c0+jglob%c0;
         int srcproc = 0;
         int k;
-        for (k = 0; k < ndim; ++k)
+        if (row_m)
             {
-            srcproc *= pdim[k];
-            srcproc += ((current_dim == k) ? srci : pidx[k]);
+            for (k = ndim-1; k >= 0; --k)
+                {
+                srcproc *= pdim[k];
+                srcproc += ((current_dim == k) ? srci : pidx[k]);
+                }
+            }
+        else
+            {
+            for (k = 0; k < ndim; ++k)
+                {
+                srcproc *= pdim[k];
+                srcproc += ((current_dim == k) ? srci : pidx[k]);
+                }
             }
  
         dfft_nrecv[srcproc] = size*sizeof(cpx_t);
@@ -148,8 +171,8 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
                      int *dfft_nrecv,
                      int *dfft_offset_send,
                      int *dfft_offset_recv,
-                     MPI_Comm comm
-                     )
+                     MPI_Comm comm,
+                     int row_m)
     {
     if (c1 == c0) return;
 
@@ -248,10 +271,21 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
 
         int destproc = 0;
         int k;
-        for (k = 0; k < ndim; ++k)
+        if (row_m)
             {
-            destproc *= pdim[k];
-            destproc += ((current_dim == k) ? i : pidx[k]);
+            for (k = ndim-1; k >=0 ;--k)
+                {
+                destproc *= pdim[k];
+                destproc += ((current_dim == k) ? i : pidx[k]);
+                }
+            }
+        else
+            {
+            for (k = 0; k < ndim; ++k)
+                {
+                destproc *= pdim[k];
+                destproc += ((current_dim == k) ? i : pidx[k]);
+                }
             }
 
         dfft_offset_send[destproc] = (send ? (stride*j1*sizeof(cpx_t)) : 0);
@@ -281,10 +315,21 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
             {
             int destproc = 0;
             int k;
-            for (k = 0; k < ndim; ++k)
+            if (row_m)
                 {
-                destproc *= pdim[k];
-                destproc += ((current_dim == k) ? i : pidx[k]);
+                for (k = ndim-1; k >=0 ;--k)
+                    {
+                    destproc *= pdim[k];
+                    destproc += ((current_dim == k) ? i : pidx[k]);
+                    }
+                }
+            else
+                {
+                for (k = 0; k < ndim; ++k)
+                    {
+                    destproc *= pdim[k];
+                    destproc += ((current_dim == k) ? i : pidx[k]);
+                    }
                 }
 
             int j1_offset = dfft_offset_send[destproc]/sizeof(cpx_t)/stride;
@@ -367,7 +412,8 @@ void mpifft1d_dif(int *dim,
             int *dfft_nrecv,
             int *dfft_offset_send,
             int *dfft_offset_recv,
-            MPI_Comm comm)
+            MPI_Comm comm,
+            int row_m)
     {
     int p = pdim[current_dim];
     int length = dim[current_dim]/pdim[current_dim];
@@ -417,7 +463,7 @@ void mpifft1d_dif(int *dim,
         dfft_redistribute_cyclic_to_block_1d(dim,pdim,ndim,current_dim, c, c1,
             pidx, rev, size, embed, in,out,rho_L,rho_pk0,
             dfft_nsend,dfft_nrecv,dfft_offset_send,dfft_offset_recv,
-            comm);
+            comm, row_m);
         }
 
     /* perform remaining short-distance butterflies,
@@ -446,7 +492,8 @@ void mpifftnd_dif(int *dim,
             int *dfft_nrecv,
             int *dfft_offset_send,
             int *dfft_offset_recv,
-            MPI_Comm comm)
+            MPI_Comm comm,
+            int row_m)
     {
     int size = size_in;
     int current_dim;
@@ -458,7 +505,7 @@ void mpifftnd_dif(int *dim,
             plans_long[current_dim], rho_L[current_dim],
             rho_pk0[current_dim],rho_Lk0[current_dim],
             dfft_nsend,dfft_nrecv,dfft_offset_send,dfft_offset_recv,
-            comm);
+            comm,row_m);
 
         int l = dim[current_dim]/pdim[current_dim];
         int stride = size/inembed[current_dim];
@@ -496,7 +543,8 @@ void redistribute_nd(int *dim,
             int *dfft_offset_send,
             int *dfft_offset_recv,
             int c2b,
-            MPI_Comm comm)
+            MPI_Comm comm,
+            int row_m)
     {
     cpx_t *cur_work =work;
     cpx_t *cur_scratch =scratch;
@@ -509,12 +557,12 @@ void redistribute_nd(int *dim,
             dfft_redistribute_block_to_cyclic_1d(dim, pdim, ndim, current_dim,
                 1, pdim[current_dim], pidx, size, embed,
                 cur_work, cur_scratch, dfft_nsend,dfft_nrecv,
-                dfft_offset_send, dfft_offset_recv, comm);
+                dfft_offset_send, dfft_offset_recv, comm,row_m);
         else
             dfft_redistribute_cyclic_to_block_1d(dim, pdim, ndim, current_dim,
                 pdim[current_dim], 1, pidx, 0, size, embed, cur_work,
                 cur_scratch, NULL, NULL, dfft_nsend,
-                dfft_nrecv, dfft_offset_send, dfft_offset_recv, comm);
+                dfft_nrecv, dfft_offset_send, dfft_offset_recv, comm,row_m);
         
         int l = dim[current_dim]/pdim[current_dim];
         int stride = size/embed[current_dim];
@@ -578,7 +626,7 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
         /* redistribution of input */
         redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
             p.size_in, p.inembed, work, scratch, p.nsend,p.nrecv,
-            p.offset_send,p.offset_recv, 0, p.comm); 
+            p.offset_send,p.offset_recv, 0, p.comm,p.row_m); 
         }
 
     /* multi-dimensional FFT */
@@ -587,14 +635,14 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
         dir ? p.plans_short_inverse : p.plans_short_forward,
         dir ? p.plans_long_inverse : p.plans_long_forward,
         p.rho_L, p.rho_pk0, p.rho_Lk0, p.nsend,p.nrecv,
-        p.offset_send,p.offset_recv, p.comm);
+        p.offset_send,p.offset_recv, p.comm,p.row_m);
 
     if ((dir && !p.input_cyclic) || (!dir && !p.output_cyclic))
         {
         /* redistribution of output */
         redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
             p.size_out,p.oembed, work, scratch, p.nsend,p.nrecv,
-            p.offset_send,p.offset_recv, 1, p.comm); 
+            p.offset_send,p.offset_recv, 1, p.comm,p.row_m); 
         }
 
     if (out_of_place)
@@ -607,13 +655,14 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
     }
 
 int dfft_create_plan(dfft_plan *p,
-    int ndim, int *gdim,
-    int *inembed, int *oembed, 
-    int *pdim, int *pidx, int input_cyclic, int output_cyclic,
+    int ndim, int *gdim, int *inembed, int *oembed, 
+    int *pdim, int *pidx, int row_m,
+    int input_cyclic, int output_cyclic,
     MPI_Comm comm)
     {
     return dfft_create_plan_common(p, ndim, gdim, inembed,
-        oembed, pdim, pidx, input_cyclic, output_cyclic, comm, 0);
+        oembed, pdim, pidx, row_m,
+        input_cyclic, output_cyclic, comm, 0);
     }
 
 void dfft_destroy_plan(dfft_plan plan)

@@ -49,7 +49,8 @@ void dfft_cuda_redistribute_block_to_cyclic_1d(
                   int *dfft_offset_send,
                   int *dfft_offset_recv,
                   MPI_Comm comm,
-                  int check_err)
+                  int check_err,
+                  int row_m)
     {
     /* exit early if nothing needs to be done */
     if (c0 == c1) return;
@@ -96,10 +97,21 @@ void dfft_cuda_redistribute_block_to_cyclic_1d(
         int jglob = j2*c0*length + j * c0 + j0;
         int desti = (jglob/(c1*length))*c1+ jglob%c1;
         int destproc = 0;
-        for (k = 0; k < ndim; ++k)
+        if (row_m)
             {
-            destproc *= pdim[k];
-            destproc += ((current_dim == k) ? desti : pidx[k]);
+            for (k = ndim-1; k >=0 ;--k)
+                {
+                destproc *= pdim[k];
+                destproc += ((current_dim == k) ? desti : pidx[k]);
+                }
+            }
+        else
+            {
+            for (k = 0; k < ndim; ++k)
+                {
+                destproc *= pdim[k];
+                destproc += ((current_dim == k) ? desti : pidx[k]);
+                }
             }
         dfft_nsend[destproc] = size*sizeof(cuda_cpx_t);
         dfft_offset_send[destproc] = offset*sizeof(cuda_cpx_t);
@@ -123,12 +135,22 @@ void dfft_cuda_redistribute_block_to_cyclic_1d(
         int srci = (jglob/(c0*length))*c0+jglob%c0;
         int srcproc = 0;
         int k;
-        for (k = 0; k < ndim; ++k)
+        if (row_m)
             {
-            srcproc *= pdim[k];
-            srcproc += ((current_dim == k) ? srci : pidx[k]);
+            for (k = ndim-1; k >= 0; --k)
+                {
+                srcproc *= pdim[k];
+                srcproc += ((current_dim == k) ? srci : pidx[k]);
+                } 
             }
- 
+        else
+            {
+            for (k = 0; k < ndim; ++k)
+                {
+                srcproc *= pdim[k];
+                srcproc += ((current_dim == k) ? srci : pidx[k]);
+                }
+            } 
         dfft_nrecv[srcproc] = size*sizeof(cuda_cpx_t);
         dfft_offset_recv[srcproc] = offset*sizeof(cuda_cpx_t);
         }
@@ -184,7 +206,8 @@ void dfft_cuda_redistribute_cyclic_to_block_1d(int *dim,
                      int *dfft_offset_send,
                      int *dfft_offset_recv,
                      MPI_Comm comm,
-                     int check_err
+                     int check_err,
+                     int row_m
                      )
     {
     if (c1 == c0) return;
@@ -284,12 +307,23 @@ void dfft_cuda_redistribute_cyclic_to_block_1d(int *dim,
 
         int destproc = 0;
         int k;
-        for (k = 0; k < ndim; ++k)
+        if (row_m)
             {
-            destproc *= pdim[k];
-            destproc += ((current_dim == k) ? i : pidx[k]);
+            for (k = ndim-1; k >=0 ;--k)
+                {
+                destproc *= pdim[k];
+                destproc += ((current_dim == k) ? i : pidx[k]);
+                }
             }
-
+        else
+            {
+            for (k = 0; k < ndim; ++k)
+                {
+                destproc *= pdim[k];
+                destproc += ((current_dim == k) ? i : pidx[k]);
+                }
+            }
+ 
         dfft_offset_send[destproc] = (send ? (stride*j1*sizeof(cuda_cpx_t)) : 0);
         if (rev && (length > c0/c1))
             {
@@ -316,12 +350,23 @@ void dfft_cuda_redistribute_cyclic_to_block_1d(int *dim,
             {
             int destproc = 0;
             int k;
-            for (k = 0; k < ndim; ++k)
+            if (row_m)
                 {
-                destproc *= pdim[k];
-                destproc += ((current_dim == k) ? i : pidx[k]);
+                for (k = ndim-1; k >=0 ;--k)
+                    {
+                    destproc *= pdim[k];
+                    destproc += ((current_dim == k) ? i : pidx[k]);
+                    }
                 }
-
+            else
+                {
+                for (k = 0; k < ndim; ++k)
+                    {
+                    destproc *= pdim[k];
+                    destproc += ((current_dim == k) ? i : pidx[k]);
+                    }
+                }
+ 
             int j1_offset = dfft_offset_send[destproc]/sizeof(cuda_cpx_t)/stride;
 
             /* we are sending from a tmp buffer/stride */
@@ -410,7 +455,8 @@ void cuda_mpifft1d_dif(int *dim,
             int *dfft_offset_send,
             int *dfft_offset_recv,
             MPI_Comm comm,
-            int check_err)
+            int check_err,
+            int row_m)
     {
     int p = pdim[current_dim];
     int length = dim[current_dim]/pdim[current_dim];
@@ -436,7 +482,7 @@ void cuda_mpifft1d_dif(int *dim,
         dfft_cuda_redistribute_cyclic_to_block_1d(dim,pdim,ndim,current_dim,
             c, c1, pidx, rev, size, embed, d_in,d_out,h_stage_in, h_stage_out,
             rho_L,rho_pk0, dfft_nsend,dfft_nrecv,dfft_offset_send,
-            dfft_offset_recv, comm, check_err);
+            dfft_offset_recv, comm, check_err, row_m);
         }
 
     /* perform remaining short-distance butterflies,
@@ -469,7 +515,8 @@ void cuda_mpifftnd_dif(int *dim,
             int *dfft_offset_send,
             int *dfft_offset_recv,
             MPI_Comm comm,
-            int check_err)
+            int check_err,
+            int row_m)
     {
     int size = size_in;
     int current_dim;
@@ -482,7 +529,7 @@ void cuda_mpifftnd_dif(int *dim,
             plans_long[current_dim], rho_L[current_dim],
             rho_pk0[current_dim],rho_Lk0[current_dim],
             dfft_nsend,dfft_nrecv,dfft_offset_send,dfft_offset_recv,
-            comm,check_err);
+            comm,check_err,row_m);
 
         int l = dim[current_dim]/pdim[current_dim];
         int stride = size/inembed[current_dim];
@@ -513,7 +560,7 @@ void cuda_redistribute_nd(int *dim,
             int *dfft_offset_recv,
             int c2b,
             MPI_Comm comm,
-            int check_err)
+            int check_err,int row_m)
     {
     cuda_cpx_t *cur_work =d_work;
     cuda_cpx_t *cur_scratch =d_scratch;
@@ -528,14 +575,14 @@ void cuda_redistribute_nd(int *dim,
                 cur_work, cur_scratch, h_stage_in, h_stage_out,
                 dfft_nsend,dfft_nrecv,
                 dfft_offset_send, dfft_offset_recv, comm,
-                check_err);
+                check_err,row_m);
         else
             dfft_cuda_redistribute_cyclic_to_block_1d(dim, pdim, ndim,
                 current_dim, pdim[current_dim], 1, pidx, 0, size, embed,
                 cur_work, cur_scratch, h_stage_in, h_stage_out,
                 NULL, NULL, dfft_nsend, dfft_nrecv, dfft_offset_send,
                 dfft_offset_recv, comm,
-                check_err);
+                check_err,row_m);
         
         int l = dim[current_dim]/pdim[current_dim];
         int stride = size/embed[current_dim];
@@ -590,7 +637,7 @@ int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan p)
         cuda_redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
             p.size_in, p.inembed, d_work, d_scratch, p.h_stage_in,
             p.h_stage_out, p.nsend,p.nrecv, p.offset_send,
-            p.offset_recv, 0, p.comm,check_err); 
+            p.offset_recv, 0, p.comm,check_err,p.row_m); 
         }
 
     /* multi-dimensional FFT */
@@ -600,14 +647,15 @@ int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan p)
         dir ? p.cuda_plans_short_inverse : p.cuda_plans_short_forward,
         dir ? p.cuda_plans_long_inverse : p.cuda_plans_long_forward,
         p.rho_L, p.rho_pk0, p.rho_Lk0, p.nsend,p.nrecv,
-        p.offset_send,p.offset_recv, p.comm,check_err);
+        p.offset_send,p.offset_recv, p.comm,check_err,p.row_m);
 
     if ((dir && !p.input_cyclic) || (!dir && !p.output_cyclic))
         {
         /* redistribution of output */
         cuda_redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
             p.size_out,p.oembed, d_work, d_scratch, p.h_stage_in, p.h_stage_out,
-            p.nsend,p.nrecv, p.offset_send,p.offset_recv, 1, p.comm,check_err); 
+            p.nsend,p.nrecv, p.offset_send,p.offset_recv, 1, p.comm,check_err,
+            p.row_m); 
         }
 
     if (out_of_place)
@@ -623,12 +671,12 @@ int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan p)
 int dfft_cuda_create_plan(dfft_plan *p,
     int ndim, int *gdim,
     int *inembed, int *oembed, 
-    int *pdim, int *pidx,
+    int *pdim, int *pidx, int row_m,
     int input_cyclic, int output_cyclic,
     MPI_Comm comm)
     {
     int res = dfft_create_plan_common(p, ndim, gdim, inembed, oembed,
-        pdim, pidx, input_cyclic, output_cyclic, comm, 1);
+        pdim, pidx, row_m, input_cyclic, output_cyclic, comm, 1);
 
     #ifndef ENABLE_MPI_CUDA
     /* allocate staging bufs */
