@@ -19,7 +19,7 @@ if(ENABLE_CUDA)
     add_executable(unit_test_cuda unit_test_cuda.c kiss_fft.c kiss_fftnd.c)
     target_link_libraries(unit_test_cuda dfft)
 
-    include_directories(${MPI_INCLUDE_PATH})
+    include_directories(${MPI_INCLUDE_PATH} ${CUDA_TOOLKIT_INCLUDE})
     if(MPI_COMPILE_FLAGS)
       set_target_properties(unit_test_cuda PROPERTIES
       COMPILE_FLAGS "${MPI_COMPILE_FLAGS}")

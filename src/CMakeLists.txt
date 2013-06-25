@@ -1,5 +1,4 @@
-include_directories(${MPI_INCLUDE_PATH})
-
+include_directories(${MPI_INCLUDE_PATH} ${CUDA_TOOLKIT_INCLUDE})
 
 if(ENABLE_CUDA)
     # CUFFT is default for CUDA
