@@ -125,8 +125,10 @@ void test_distributed_fft_nd(int nd)
 
         dfft_plan plan_1;
 
-        dfft_cuda_create_plan(&plan_1, nd, dim_glob, NULL, NULL, pdim, 0, 0,
-            MPI_COMM_WORLD);
+        int pidx[1];
+        pidx[0] =s;
+        dfft_cuda_create_plan(&plan_1, nd, dim_glob, NULL, NULL, pdim, pidx,
+            0, 0, MPI_COMM_WORLD);
 
         /* forward transform */
         dfft_cuda_execute(in_1_d, in_1_d, 0, plan_1);
@@ -178,9 +180,9 @@ void test_distributed_fft_nd(int nd)
     for (i = 0; i < nd-1; ++i)
         if (!s) printf("%d x ",dim_glob[i]);
     if (!s) printf("%d matrix\n", dim_glob[nd-1]);
-   
+  
     dfft_plan plan_2;
-    dfft_cuda_create_plan(&plan_2, nd, dim_glob, NULL, NULL, pdim, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_create_plan(&plan_2, nd, dim_glob, NULL, NULL, pdim, pidx, 0, 0, MPI_COMM_WORLD);
 
     /* forward transfom */
     dfft_cuda_execute(in_2_d, in_2_d, 0, plan_2);
@@ -285,8 +287,8 @@ void test_distributed_fft_nd(int nd)
     cudaMemcpy(in_3_d, in_3_h, sizeof(cuda_cpx_t)*size_4n_embed,cudaMemcpyDefault);
 
     dfft_plan plan_3_fw,plan_3_bw;
-    dfft_cuda_create_plan(&plan_3_fw, nd, dim_glob, inembed, NULL, pdim, 0, 0, MPI_COMM_WORLD);
-    dfft_cuda_create_plan(&plan_3_bw, nd, dim_glob, NULL, inembed, pdim, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_create_plan(&plan_3_fw, nd, dim_glob, inembed, NULL, pdim, pidx, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_create_plan(&plan_3_bw, nd, dim_glob, NULL, inembed, pdim, pidx, 0, 0, MPI_COMM_WORLD);
    
     int offset = 0;
     int n_ghost = 2;
@@ -417,9 +419,9 @@ void test_distributed_fft_1d_compare(int n)
     cuda_cpx_t *out_d,*out_h;
     cudaMalloc((void **)&out_d,sizeof(cuda_cpx_t)*n/p);
     out_h = (cuda_cpx_t *)malloc(sizeof(cuda_cpx_t)*n/p);
-
+    
     dfft_plan plan;
-    dfft_cuda_create_plan(&plan,1, dim_glob, NULL, NULL, pdim, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_create_plan(&plan,1, dim_glob, NULL, NULL, pdim, pidx, 0, 0, MPI_COMM_WORLD);
 
     /* copy data to device */
     cudaMemcpy(in_d, in_h, sizeof(cuda_cpx_t)*n/p, cudaMemcpyDefault);
@@ -579,7 +581,7 @@ void test_distributed_fft_3d_compare()
     out_h = (cuda_cpx_t *) malloc(sizeof(cuda_cpx_t)*local_nx*local_ny*local_nz);
 
     dfft_plan plan;
-    dfft_cuda_create_plan(&plan,3, dim_glob, NULL, NULL, pdim, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_create_plan(&plan,3, dim_glob, NULL, NULL, pdim, pidx, 0, 0, MPI_COMM_WORLD);
 
     /* copy data to device */
     cudaMemcpy(in_d, in_h, sizeof(cuda_cpx_t)*local_nx*local_ny*local_nz, cudaMemcpyDefault);

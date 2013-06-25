@@ -23,7 +23,7 @@
 EXTERN_DFFT int dfft_create_plan(dfft_plan *p,
     int ndim, int *gdim,
     int *inembed, int *oembed, 
-    int *pdim, int input_cyclic, int output_cyclic,
+    int *pdim, int *pidx, int input_cyclic, int output_cyclic,
     MPI_Comm comm);
 
 /*

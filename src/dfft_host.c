@@ -563,7 +563,8 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
         {
         work = p.scratch;
         scratch = p.scratch_2; 
-        memcpy(work, in, p.size_in*sizeof(cpx_t));
+        int size = p.size_in - p.delta_in;
+        memcpy(work, in, size*sizeof(cpx_t));
         }
     else
         {
@@ -588,7 +589,7 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
         p.rho_L, p.rho_pk0, p.rho_Lk0, p.nsend,p.nrecv,
         p.offset_send,p.offset_recv, p.comm);
 
-    if ((dir && !p.input_cyclic) || (!dir && !p.input_cyclic))
+    if ((dir && !p.input_cyclic) || (!dir && !p.output_cyclic))
         {
         /* redistribution of output */
         redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
@@ -597,7 +598,10 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
         }
 
     if (out_of_place)
-        memcpy(out, work, sizeof(cpx_t)*p.size_out);
+        {
+        int size = p.size_out - p.delta_out;
+        memcpy(out, work, sizeof(cpx_t)*size);
+        }
 
     return 0;
     }
@@ -605,11 +609,11 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
 int dfft_create_plan(dfft_plan *p,
     int ndim, int *gdim,
     int *inembed, int *oembed, 
-    int *pdim, int input_cyclic, int output_cyclic,
+    int *pdim, int *pidx, int input_cyclic, int output_cyclic,
     MPI_Comm comm)
     {
     return dfft_create_plan_common(p, ndim, gdim, inembed,
-        oembed, pdim, input_cyclic, output_cyclic, comm, 0);
+        oembed, pdim, pidx, input_cyclic, output_cyclic, comm, 0);
     }
 
 void dfft_destroy_plan(dfft_plan plan)

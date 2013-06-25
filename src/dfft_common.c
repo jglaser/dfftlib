@@ -40,7 +40,8 @@ void bitrev_init(int n, int *rho)
 int dfft_create_plan_common(dfft_plan *p,
     int ndim, int *gdim,
     int *inembed, int *oembed, 
-    int *pdim, int input_cyclic, int output_cyclic,
+    int *pdim, int *pidx,
+    int input_cyclic, int output_cyclic,
     MPI_Comm comm,
     int device)
     {
@@ -48,7 +49,6 @@ int dfft_create_plan_common(dfft_plan *p,
 
     p->comm = comm;
 
-    MPI_Comm_rank(comm,&s);
     MPI_Comm_size(comm,&nump);
   
     /* number of processor must be power of two */
@@ -130,10 +130,10 @@ int dfft_create_plan_common(dfft_plan *p,
         }
 
     /* local problem size */
-    int size_in = gdim[0]/pdim[0];
-    int size_out = gdim[0]/pdim[0];
+    int size_in = 1;
+    int size_out = 1;
 
-    for (i = 1; i < ndim; ++i)
+    for (i = 0; i < ndim ; ++i)
         {
         size_in *= p->inembed[i];
         size_out *= p->oembed[i];
@@ -141,6 +141,18 @@ int dfft_create_plan_common(dfft_plan *p,
 
     p->size_in = size_in;
     p->size_out = size_out;
+
+    int delta_in = 0;
+    int delta_out = 0;
+    for (i = 0; i < ndim; ++i)
+        {
+        delta_in *= p->inembed[i];
+        delta_in += (p->inembed[i]- gdim[i]/pdim[i]);
+        delta_out *= p->oembed[i];
+        delta_out += (p->oembed[i]- gdim[i]/pdim[i]);
+        }
+    p->delta_in = delta_in;
+    p->delta_out = delta_out;
 
     /* find length k0 of last stage of butterflies */
     p->k0 = malloc(sizeof(int)*ndim);
@@ -176,14 +188,10 @@ int dfft_create_plan_common(dfft_plan *p,
         bitrev_init(length/(p->k0[i]),p->rho_Lk0[i]);
         }
 
-    /* find processor coordinates */
-    p->pidx = malloc(sizeof(int)*ndim);
-    /* processor grid in column major */
-    int idx = s;
-    for (i = ndim-1; i >= 0; --i)
+    /* processor coordinates */
+    for (i = 0; i < ndim; ++i)
         {
-        p->pidx[i] = idx % pdim[i];
-        idx /= pdim[i];
+        p->pidx[i] = pidx[i];
         }
 
     /* init local FFT library */
@@ -282,7 +290,9 @@ int dfft_create_plan_common(dfft_plan *p,
     p->output_cyclic = output_cyclic;
 
     p->device = device;
-
+    #ifdef ENABLE_CUDA
+    p->check_cuda_errors = 0;
+    #endif
     return 0;
     } 
 

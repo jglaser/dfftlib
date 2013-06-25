@@ -23,14 +23,19 @@
  */
 EXTERN_DFFT int dfft_cuda_create_plan(dfft_plan *p,
     int ndim, int *gdim,
-    int *inembed, int *oembed, 
-    int *pdim, int input_cyclic, int output_cyclic,
+    int *inembed, int *oembed, int *pdim, int *pidx,
+    int input_cyclic, int output_cyclic,
     MPI_Comm comm);
 
 /*
  * Destroy a device plan
  */
 EXTERN_DFFT void dfft_cuda_destroy_plan(dfft_plan plan);
+
+/*
+ * Set error checking on a plan
+ */
+EXTERN_DFFT void dfft_cuda_check_errors(dfft_plan *plan, int check_err);
 
 /*
  * Execute the parallel FFT on the device

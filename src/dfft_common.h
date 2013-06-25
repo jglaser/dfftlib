@@ -64,12 +64,17 @@ typedef struct
     int np;               /* size of problem (number of elements per proc) */
     int size_in;          /* size including embedding */
     int size_out;         /* size including embedding */
+    int delta_in;         /* difference of array size to product of embedding dimensions */
+    int delta_out;        /* difference of array size to product of embedding dimensions */
     int *k0;              /* Last stage of butterflies (per dimension */
     
     int input_cyclic;     /* ==1 if input for the forward transform is cyclic */
     int output_cyclic;    /* ==1 if output for the backward transform is cyclic */
 
     int device;           /* ==1 if this is a device plan */
+    #ifdef ENABLE_CUDA
+    int check_cuda_errors; /* == 1 if we are checking errors */
+    #endif
     } dfft_plan;
 
 /*
@@ -78,7 +83,7 @@ typedef struct
 int dfft_create_plan_common(dfft_plan *plan,
     int ndim, int *gdim,
     int *inembed, int *ombed, 
-    int *pdim, int input_cyclic, int output_cyclic,
+    int *pdim, int *pidx, int input_cyclic, int output_cyclic,
     MPI_Comm comm,
     int device);
 

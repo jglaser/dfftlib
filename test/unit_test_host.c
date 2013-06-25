@@ -96,8 +96,9 @@ void test_distributed_fft_nd(int nd)
         IM(in_1[0]) = 0.0f;
 
         dfft_plan plan_1;
-
-        dfft_create_plan(&plan_1, nd, dim_glob, NULL, NULL, pdim, 0, 0,
+        int pidx[1];
+        pidx[0] = s;
+        dfft_create_plan(&plan_1, nd, dim_glob, NULL, NULL, pdim, pidx, 0, 0,
             MPI_COMM_WORLD);
 
         /* forward transform */
@@ -141,9 +142,9 @@ void test_distributed_fft_nd(int nd)
     for (i = 0; i < nd-1; ++i)
         if (!s) printf("%d x ",dim_glob[i]);
     if (!s) printf("%d matrix\n", dim_glob[nd-1]);
-   
+  
     dfft_plan plan_2;
-    dfft_create_plan(&plan_2, nd, dim_glob, NULL, NULL, pdim, 0, 0, MPI_COMM_WORLD);
+    dfft_create_plan(&plan_2, nd, dim_glob, NULL, NULL, pdim, pidx, 0, 0, MPI_COMM_WORLD);
 
     /* forward transfom */
     dfft_execute(in_2, in_2, 0, plan_2);
@@ -239,8 +240,8 @@ void test_distributed_fft_nd(int nd)
         }
 
     dfft_plan plan_3_fw,plan_3_bw;
-    dfft_create_plan(&plan_3_fw, nd, dim_glob, inembed, NULL, pdim, 0, 0, MPI_COMM_WORLD);
-    dfft_create_plan(&plan_3_bw, nd, dim_glob, NULL, inembed, pdim, 0, 0, MPI_COMM_WORLD);
+    dfft_create_plan(&plan_3_fw, nd, dim_glob, inembed, NULL, pdim, pidx, 0, 0, MPI_COMM_WORLD);
+    dfft_create_plan(&plan_3_bw, nd, dim_glob, NULL, inembed, pdim, pidx, 0, 0, MPI_COMM_WORLD);
    
     int offset = 0;
     int n_ghost = 2;
@@ -367,7 +368,7 @@ void test_distributed_fft_1d_compare(int n)
     out = (cpx_t *) malloc(n/p*sizeof(cpx_t));
 
     dfft_plan plan;
-    dfft_create_plan(&plan,1, dim_glob, NULL, NULL, pdim, 0, 0, MPI_COMM_WORLD);
+    dfft_create_plan(&plan,1, dim_glob, NULL, NULL, pdim, pidx, 0, 0, MPI_COMM_WORLD);
 
     // forward transform
     dfft_execute(in, out, 0, plan);
@@ -435,10 +436,9 @@ void test_distributed_fft_3d_compare()
     if (!s) printf("%d\n", pdim[nd-1]);
 
     /* determine processor index */
-    int *pidx;
-    pidx = (int*)malloc(nd*sizeof(int));
+    int pidx[3];
     int idx = s;
-    for (i = nd-1; i >= 0; --i)
+    for (i = 2; i >= 0; --i)
         {
         pidx[i] = idx % pdim[i];
         idx /= pdim[i];
@@ -517,7 +517,7 @@ void test_distributed_fft_3d_compare()
     out = (cpx_t *) malloc(local_nx*local_ny*local_nz*sizeof(cpx_t));
 
     dfft_plan plan;
-    dfft_create_plan(&plan,3, dim_glob, NULL, NULL, pdim, 0, 0, MPI_COMM_WORLD);
+    dfft_create_plan(&plan,3, dim_glob, NULL, NULL, pdim,pidx, 0, 0, MPI_COMM_WORLD);
 
     // forward transform
     dfft_execute(in, out, 0, plan);
@@ -562,7 +562,6 @@ void test_distributed_fft_3d_compare()
     free(out_kiss);
     free(out);
     free(in);
-    free(pidx);
     free(dim_glob);
     dfft_destroy_plan(plan);
     }
