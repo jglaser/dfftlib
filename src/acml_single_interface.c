@@ -3,6 +3,7 @@
 
 #include "acml_single_interface.h"
 
+#include <acml.h>
 /* Initialize the library
  */
 int dfft_init_local_fft()
@@ -36,11 +37,11 @@ int dfft_create_1d_plan(
     plan->idist = idist;
     plan->ostride = ostride;
     plan->odist = odist;
-    plan->comm = (complex *) malloc(sizeof(complex)*(5*dim+100));
+    plan->comm = (cpx_t *) malloc(sizeof(cpx_t)*(5*dim+100));
     /* Initialize communication buffer */
     int info;
     cfft1mx(100, 1.0, 0, howmany, dim, NULL, istride, idist, NULL,
-             ostride, odist, plan->comm, &info);
+             ostride, odist, (complex *)plan->comm, &info);
     return 0;
     }
 
@@ -72,10 +73,10 @@ void dfft_local_1dfft(
     int info;
     if (!dir)
         cfft1mx(-1, 1.0, (in==out) ? 1 : 0,
-             p.howmany, p.dim, in, p.istride, p.idist,
-             out, p.ostride, p.odist, p.comm, &info);
+             p.howmany, p.dim, (complex *)in, p.istride, p.idist,
+             (complex *)out, p.ostride, p.odist, (complex *)p.comm, &info);
     else
         cfft1mx(1, 1.0, (in == out) ? 1 : 0,
-            p.howmany, p.dim, in, p.istride, p.idist,
-            out,p.ostride, p.odist, p.comm, &info);
+            p.howmany, p.dim, (complex *)in, p.istride, p.idist,
+            (complex *)out,p.ostride, p.odist, (complex *)p.comm, &info);
     }

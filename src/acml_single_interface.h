@@ -5,9 +5,9 @@
 #define __DFFT_MKL_SINGLE_INTERFACE_H__
 
 #include <stdlib.h>
-#include <acml.h>
 
-typedef complex cpx_t;
+typedef struct { float real, imag; } float2_dfft;
+typedef float2_dfft cpx_t;
 
 /* ACML doesn't have plans, so we have to roll our own */
 typedef struct
@@ -18,7 +18,7 @@ typedef struct
     int ostride;
     int idist;
     int odist;
-    complex *comm;
+    cpx_t *comm;
     } acml_plan;
 
 typedef acml_plan plan_t;
