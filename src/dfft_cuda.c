@@ -692,6 +692,7 @@ int dfft_cuda_create_plan(dfft_plan *p,
     cudaHostRegister(p->h_stage_in, size, cudaHostAllocDefault);
     cudaHostRegister(p->h_stage_out, size, cudaHostAllocDefault);
     #endif
+    return 0;
     } 
 
 void dfft_cuda_destroy_plan(dfft_plan plan)

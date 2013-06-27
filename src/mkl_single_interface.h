@@ -5,7 +5,7 @@
 #define __DFFT_MKL_SINGLE_INTERFACE_H__
 
 #include <omp.h>
-#include "mkl.h"
+#include <mkl.h>
 
 typedef MKL_Complex8  cpx_t;
 typedef DFTI_DESCRIPTOR_HANDLE plan_t;

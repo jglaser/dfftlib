@@ -11,6 +11,7 @@ find_library(MKL_LIBRARIES
   HINTS
   $ENV{MKLLIB}
   $ENV{MKLROOT}/lib/intel64
+  $ENV{MKL_HOME}/lib/intel64
   /opt/mkl-*/lib/em64t
   /opt/intel/mkl/*/lib/em64t
   /opt/intel/Compiler/*/*/mkl/lib/em64t
@@ -45,6 +46,7 @@ find_path(MKL_INCLUDE_DIR
   HINTS
   $ENV{MKLINCLUDE}
   $ENV{MKLROOT}/include
+  $ENV{MKL_HOME}/include
   /opt/mkl-*/
   /opt/intel/mkl/*/
   /opt/intel/Compiler/*/*/mkl/

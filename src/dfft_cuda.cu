@@ -180,6 +180,36 @@ __global__ void gpu_transpose_kernel(const unsigned int size,
     out[j*embed + i] = in[idx];
     }
 
+#define TILE_DIM 16
+#define BLOCK_ROWS 16
+
+__global__ void transpose_sdk(cuda_cpx_t *odata, const cuda_cpx_t *idata, int width, int height, int embed)
+{
+    __shared__ cuda_cpx_t tile[TILE_DIM][TILE_DIM+1];
+
+    int xIndex = blockIdx.x * TILE_DIM + threadIdx.x;
+    int yIndex = blockIdx.y * TILE_DIM + threadIdx.y;
+    int index_in = xIndex + (yIndex)*width;
+
+    int xIndex_new = blockIdx.y * TILE_DIM + threadIdx.x;
+    int yIndex_new = blockIdx.x * TILE_DIM + threadIdx.y;
+    int index_out = xIndex_new + (yIndex_new)*embed;
+
+    for (int i=0; i<TILE_DIM; i+=BLOCK_ROWS)
+    {
+        if ((xIndex < width) && ((i+yIndex) <height))
+            tile[threadIdx.y+i][threadIdx.x] = idata[index_in+i*width];
+    }
+
+    __syncthreads();
+
+    for (int i=0; i<TILE_DIM; i+=BLOCK_ROWS)
+    {
+        if (xIndex_new< height && ((yIndex_new+i) <width))
+            odata[index_out+i*embed] = tile[threadIdx.x][threadIdx.y+i];
+    }
+}
+
 void gpu_transpose(const unsigned int size,
                    const unsigned int length,
                    const unsigned int stride,
@@ -191,5 +221,16 @@ void gpu_transpose(const unsigned int size,
     unsigned int n_block = size/block_size;
     if (size % block_size ) n_block++;
     
-    gpu_transpose_kernel<<<n_block, block_size>>>(size, length, stride, embed, in, out);
+//    gpu_transpose_kernel<<<n_block, block_size>>>(size, length, stride, embed, in, out);
+    int size_x = stride;
+    int size_y = length;
+    int nblocks_x = size_x/TILE_DIM;
+    if (size_x%TILE_DIM) nblocks_x++;
+    int nblocks_y = size_y/TILE_DIM;
+    if (size_y%TILE_DIM) nblocks_y++;
+    dim3 grid(nblocks_x, nblocks_y), threads(TILE_DIM,BLOCK_ROWS);
+    if (stride == 1 || length ==1 )
+        cudaMemcpy(out,in,sizeof(cuda_cpx_t)*stride*length,cudaMemcpyDefault);
+    else
+        transpose_sdk<<<grid, threads>>>(out,in, size_x, size_y,embed);
     }
