@@ -4,13 +4,26 @@
 #ifndef __DFFT_MKL_SINGLE_INTERFACE_H__
 #define __DFFT_MKL_SINGLE_INTERFACE_H__
 
-#include <omp.h>
-#include <mkl.h>
+#include <stdlib.h>
 
-#define FFT1D_SUPPORTS_THREADS
+//#define FFT1D_SUPPORTS_THREADS
 
-typedef MKL_Complex8  cpx_t;
-typedef DFTI_DESCRIPTOR_HANDLE plan_t;
+typedef struct { float real, imag; } float2_dfft;
+typedef float2_dfft cpx_t;
+
+/* ACML doesn't have plans, so we have to roll our own */
+typedef struct
+    {
+    int dim;
+    int howmany;
+    int istride;
+    int ostride;
+    int idist;
+    int odist;
+    cpx_t *comm;
+    } acml_plan;
+
+typedef acml_plan plan_t;
 
 #define RE(X) X.real
 #define IM(X) X.imag

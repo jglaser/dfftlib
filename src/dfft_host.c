@@ -417,17 +417,25 @@ void mpifft1d_dif(int *dim,
     {
     int p = pdim[current_dim];
     int length = dim[current_dim]/pdim[current_dim];
+    int st = size/embed[current_dim]*(dim[current_dim]/pdim[current_dim]);
 
     /* compute stride for column major matrix storage */
     int stride = size/embed[current_dim];
 
     int c;
+    int k0 = length;
     for (c = p; c >1; c /= length)
         {
 #if 1
         /* do local out-of-place place FFT (long-distance butterflies) */
+        #ifdef FFT1D_SUPPORTS_THREADS
         dfft_local_1dfft(in, out, plan_long, inverse);
-
+        #else
+        int i;
+        #pragma omp parallel for
+        for (i = 0; i < st/length; ++i)
+            dfft_local_1dfft(in+i, out+i, plan_long, inverse);
+        #endif
         /* apply twiddle factors */
         double alpha = ((double)(pidx[current_dim] %c))/(double)c;
         int j;
@@ -460,6 +468,7 @@ void mpifft1d_dif(int *dim,
 
         /* in-place redistribute from group-cyclic c -> c1 */
         int c1 = ((c > length) ? (c/length) : 1);
+        k0 = c;
         dfft_redistribute_cyclic_to_block_1d(dim,pdim,ndim,current_dim, c, c1,
             pidx, rev, size, embed, in,out,rho_L,rho_pk0,
             dfft_nsend,dfft_nrecv,dfft_offset_send,dfft_offset_recv,
@@ -468,7 +477,14 @@ void mpifft1d_dif(int *dim,
 
     /* perform remaining short-distance butterflies,
      * out-of-place 1d FFT */
+    #ifdef FFT1D_SUPPORTS_THREADS
     dfft_local_1dfft(in, out, plan_short,inverse);
+    #else
+    int i;
+    #pragma omp parallel for
+    for (i = 0; i < st/k0; ++i)
+        dfft_local_1dfft(in+i, out+i, plan_short, inverse);
+    #endif
     } 
 
 /* n-dimensional fft routine (in-place)
