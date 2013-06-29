@@ -28,9 +28,10 @@
  *****************************************************************************/
 
 /*
- * n-dimensional redistribute from group-cyclic with cycle c0 to cycle c1>=c0
+ * n-dimensional redistribute from group-cyclic with cycle c0 to cycle c1
+ * 1 <=c0,c1 <= pdim[i]
  */
-void dfft_cuda_redistribute_block_to_cyclic_nd(
+void dfft_cuda_redistribute_nd(
                   int *dim,
                   int *pdim,
                   int ndim,
@@ -41,6 +42,7 @@ void dfft_cuda_redistribute_block_to_cyclic_nd(
                   int *embed,
                   int *d_c0,
                   int *d_c1,
+                  int dir,
                   int *d_pidx,
                   int *d_pdim,
                   int *d_embed,
@@ -114,7 +116,14 @@ void dfft_cuda_redistribute_block_to_cyclic_nd(
             int j2_new_local = s / c1[current_dim];
             int p = pdim[current_dim];
 
-            int ratio = c1[current_dim]/c0[current_dim];
+            int ratio;
+            /* dir == 1: block to cyclic,
+               dir == 0: cyclic to block */
+            if (dir)
+                ratio = c1[current_dim]/c0[current_dim];
+            else
+                ratio = c0[current_dim]/c1[current_dim];
+
             int size = ((length/ratio > 1) ? (length/ratio) : 1);
 
             /* initialize send offsets */
@@ -123,21 +132,43 @@ void dfft_cuda_redistribute_block_to_cyclic_nd(
             int j0_new_remote = i % c1[current_dim];
             int j2_new_remote = i / c1[current_dim];
 
-            send &= ((j0_local == (j0_new_remote % c0[current_dim]))
-                && (j2_new_remote == j2_local / ratio));
-            recv &= ((j0_remote == (j0_new_local % c0[current_dim]))
-                && (j2_new_local == j2_remote / ratio));
-            if (c1[current_dim] >= length*c0[current_dim])
+            if (dir)
                 {
-                send &= ((j0_new_remote / (length*c0[current_dim])) == (j2_local % (ratio/length)));
-                recv &= ((j0_new_local / (length*c0[current_dim])) == (j2_remote % (ratio/length)));
+                send &= ((j0_local == (j0_new_remote % c0[current_dim]))
+                    && (j2_new_remote == j2_local / ratio));
+                recv &= ((j0_remote == (j0_new_local % c0[current_dim]))
+                    && (j2_new_local == j2_remote / ratio));
                 }
-          
+            else
+                {
+                send &= (((j0_local % c1[current_dim]) == j0_new_remote)
+                    && (j2_local == (j2_new_remote/ratio)));
+                recv &= (((j0_remote % c1[current_dim]) == j0_new_local)
+                    && (j2_remote == (j2_new_local/ratio)));
+                }
+            if (ratio >= length)
+                {
+                if (dir)
+                    {
+                    send &= ((j0_new_remote / (length*c0[current_dim]))
+                        == (j2_local % (ratio/length)));
+                    recv &= ((j0_new_local / (length*c0[current_dim]))
+                        == (j2_remote % (ratio/length)));
+                    }
+                else
+                    {
+                    send &= ((j0_local / (length*c1[current_dim]))
+                        == (j2_new_remote % (ratio/length)));
+                    recv &= ((j0_remote / (length*c1[current_dim]))
+                        == (j2_new_local % (ratio/length)));
+                    }
+                } 
+
             /* determine packet length for current dimension */
-            if (c1[current_dim] >= length*c0[current_dim])
+            if (ratio >= length)
                 size = 1;
             else
-                size = length*c0[current_dim]/c1[current_dim];
+                size = length/ratio;
 
             recv_size *= (recv ? size : 0);
             send_size *= (send ? size : 0);
@@ -151,12 +182,17 @@ void dfft_cuda_redistribute_block_to_cyclic_nd(
         soffs += send_size;
         } /* end loop over processors */
 
+    /* pass arguments to CUDA */
     cudaMemcpy(d_c0, c0, sizeof(int)*ndim,cudaMemcpyDefault);
     cudaMemcpy(d_c1, c1, sizeof(int)*ndim,cudaMemcpyDefault);
 
     /* pack data */
-    gpu_b2c_pack_nd(size_in, d_c0, d_c1, ndim, d_embed,
-        d_length, row_m, d_work, d_scratch);
+    if (dir)
+        gpu_b2c_pack_nd(size_in, d_c0, d_c1, ndim, d_embed,
+            d_length, row_m, d_work, d_scratch);
+    else
+        gpu_c2b_pack_nd(size_in, d_c0, d_c1, ndim, d_embed,
+            d_length, row_m, d_work, d_scratch);
     if (check_err) CHECK_CUDA();
 
     /* synchronize */
@@ -182,8 +218,12 @@ void dfft_cuda_redistribute_block_to_cyclic_nd(
     #endif
 
     /* unpack data */
-    gpu_b2c_unpack_nd(size_in, d_c0, d_c1, ndim, d_embed, d_length,
-        row_m, d_scratch_2, d_work);
+    if (dir)
+        gpu_b2c_unpack_nd(size_in, d_c0, d_c1, ndim, d_embed, d_length,
+            row_m, d_scratch_2, d_work);
+    else
+        gpu_c2b_unpack_nd(size_in, d_c0, d_c1, ndim, d_embed, d_length,
+            row_m, d_scratch_2, d_work);
     if (check_err) CHECK_CUDA();
     }
 
@@ -705,7 +745,7 @@ void cuda_mpifftnd_dif(int *dim,
         }
     }
 
-void cuda_redistribute_nd(int *dim,
+void dfft_cuda_redistribute(int *dim,
             int *pdim,
             int ndim,
             int* pidx,
@@ -734,64 +774,34 @@ void cuda_redistribute_nd(int *dim,
     {
     cuda_cpx_t *cur_work =d_work;
     cuda_cpx_t *cur_scratch =d_scratch;
+    int i;
 
     if (!c2b)
         {
-        int i;
         for (i = 0; i < ndim; ++i)
             {
             /* block to cyclic */
             c0[i] = 1;
             c1[i] = pdim[i];
             }
-
-        dfft_cuda_redistribute_block_to_cyclic_nd(dim,pdim,ndim, c0,
-                  c1, pidx, size, embed, d_c0, d_c1, d_pidx,
-                  d_pdim, d_embed, d_length, d_work, d_scratch,
-                  d_scratch_2, h_stage_in, h_stage_out, nsend,
-                  nrecv, offset_send, offset_recv, comm,
-                  check_err, row_m);
-        return;
         }
- 
-    int current_dim;
-    for (current_dim = 0; current_dim < ndim; ++current_dim)
+    else
         {
-        /* redistribute along one dimension (in-place) */
-        if (!c2b)
+        for (i = 0; i < ndim; ++i)
             {
-            dfft_cuda_redistribute_block_to_cyclic_1d(dim, pdim, ndim,
-                current_dim, 1, pdim[current_dim], pidx, size, embed,
-                cur_work, cur_scratch, h_stage_in, h_stage_out,
-                nsend,nrecv, offset_send, offset_recv, comm,
-                check_err,row_m);
+            /* cyclic to block */
+            c0[i] = pdim[i];
+            c1[i] = 1;
             }
-        else
-            dfft_cuda_redistribute_cyclic_to_block_1d(dim, pdim, ndim,
-                current_dim, pdim[current_dim], 1, pidx, 0, size, embed,
-                cur_work, cur_scratch, h_stage_in, h_stage_out,
-                NULL, NULL, nsend, nrecv, offset_send,
-                offset_recv, comm, check_err,row_m);
-        
-        int l = dim[current_dim]/pdim[current_dim];
-        int stride = size/embed[current_dim];
-
-        /* transpose local matrix */
-        gpu_transpose(size,l,stride, embed[current_dim],cur_work, cur_scratch);
-        if (check_err) CHECK_CUDA();
-
-        /* swap buffers */
-        cuda_cpx_t *tmp;        
-        tmp = cur_scratch;
-        cur_scratch = cur_work;
-        cur_work = tmp;
         }
 
-    if (ndim % 2)
-        {
-        cudaMemcpy(d_work, d_scratch, sizeof(cuda_cpx_t)*size,cudaMemcpyDefault);
-        if (check_err) CHECK_CUDA();
-        }
+    int dir = (c2b ? 0 : 1 );
+    dfft_cuda_redistribute_nd(dim,pdim,ndim, c0,
+          c1, pidx, size, embed, d_c0, d_c1, dir, d_pidx,
+          d_pdim, d_embed, d_length, d_work, d_scratch,
+          d_scratch_2, h_stage_in, h_stage_out, nsend,
+          nrecv, offset_send, offset_recv, comm,
+          check_err, row_m);
     }
 
 
@@ -823,7 +833,7 @@ int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan p)
     if ((!dir && !p.input_cyclic) || (dir && !p.output_cyclic))
         {
         /* redistribution of input */
-        cuda_redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
+        dfft_cuda_redistribute(p.gdim, p.pdim, p.ndim, p.pidx,
             p.size_in, p.inembed, p.c0, p.c1, p.d_c0, p.d_c1,
             p.d_pidx, p.d_pdim, p.d_iembed, p.d_length,
             d_work, d_scratch, p.d_scratch_3, p.h_stage_in,
@@ -843,7 +853,7 @@ int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan p)
     if ((dir && !p.input_cyclic) || (!dir && !p.output_cyclic))
         {
         /* redistribution of output */
-        cuda_redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
+        dfft_cuda_redistribute(p.gdim, p.pdim, p.ndim, p.pidx,
             p.size_out, p.oembed, p.c0, p.c1, p.d_c0, p.d_c1,
             p.d_pidx, p.d_pdim, p.d_oembed, p.d_length,
             d_work, d_scratch, p.d_scratch_3, p.h_stage_in,
