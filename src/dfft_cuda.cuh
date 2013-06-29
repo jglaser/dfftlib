@@ -34,6 +34,28 @@ EXTERN_DFFT void gpu_c2b_unpack(const unsigned int local_size,
                     cuda_cpx_t *d_local_data,
                     const cuda_cpx_t *d_scratch);
 
+EXTERN_DFFT void gpu_b2c_pack_nd(unsigned int local_size,
+                     int *d_c0,
+                     int *d_c1,
+                     int ndim,
+                     int *d_embed,
+                     int *d_length,
+                     int row_m,
+                     const cuda_cpx_t *local_data,
+                     cuda_cpx_t *send_data
+                     );
+
+EXTERN_DFFT void gpu_b2c_unpack_nd(unsigned int local_size,
+                     int *d_c0,
+                     int *d_c1,
+                     int ndim,
+                     int *d_embed,
+                     int *d_length,
+                     int row_m,
+                     const cuda_cpx_t *recv_data,
+                     cuda_cpx_t *local_data
+                     );
+
 EXTERN_DFFT void gpu_transpose(const unsigned int local_size,
                    const unsigned int length,
                    const unsigned int stride,

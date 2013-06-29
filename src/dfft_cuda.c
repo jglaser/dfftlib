@@ -28,6 +28,167 @@
  *****************************************************************************/
 
 /*
+ * n-dimensional redistribute from group-cyclic with cycle c0 to cycle c1>=c0
+ */
+void dfft_cuda_redistribute_block_to_cyclic_nd(
+                  int *dim,
+                  int *pdim,
+                  int ndim,
+                  int *c0,
+                  int *c1,
+                  int* pidx,
+                  int size_in,
+                  int *embed,
+                  int *d_c0,
+                  int *d_c1,
+                  int *d_pidx,
+                  int *d_pdim,
+                  int *d_embed,
+                  int *d_length,
+                  cuda_cpx_t *d_work,
+                  cuda_cpx_t *d_scratch,
+                  cuda_cpx_t *d_scratch_2,
+                  cuda_cpx_t *h_stage_in,
+                  cuda_cpx_t *h_stage_out,
+                  int *nsend,
+                  int *nrecv,
+                  int *offset_send,
+                  int *offset_recv,
+                  MPI_Comm comm,
+                  int check_err,
+                  int row_m)
+    {
+    /* exit early if nothing needs to be done */
+    int res = 1;
+    int i;
+    for (i = 0; i < ndim; ++i)
+        if (!(c0[i] == c1[i])) res = 0;
+    if (res) return;
+
+    int pdim_tot=1;
+    int k,t;
+    for (k = 0; k < ndim; ++k)
+        pdim_tot *= pdim[k];
+    for (t = 0; t<pdim_tot; ++t)
+        {
+        nsend[t] = 0;
+        nrecv[t] = 0;
+        offset_send[t] = 0;
+        offset_recv[t] = 0;
+        }
+
+    int roffs = 0;
+    int soffs = 0;
+    for (t = 0; t < pdim_tot; ++t)
+        {
+        int send_size = 1;
+        int recv_size = 1;
+
+        /* send and recv flags */
+        int send =1;
+        int recv=1;
+        int current_dim;
+        int tmp = t;
+        int tmp_pidx = pdim_tot;
+        for (current_dim = 0; current_dim < ndim; ++current_dim)
+            {
+            /* find coordinate of remote procesor along current dimension */
+            if (!row_m)
+                {
+                tmp_pidx /= pdim[current_dim];
+                i = tmp / tmp_pidx;
+                tmp %= tmp_pidx;
+                }
+            else
+                {
+                i = (tmp % pdim[k]);
+                tmp/=pdim[current_dim];
+                }
+            int length = dim[current_dim]/pdim[current_dim];
+
+            /* processor index along current dimension */
+            int s = pidx[current_dim];
+            int j0_local = s % c0[current_dim];
+            int j2_local = s / c0[current_dim];
+            int j0_new_local = s % c1[current_dim];
+            int j2_new_local = s / c1[current_dim];
+            int p = pdim[current_dim];
+
+            int ratio = c1[current_dim]/c0[current_dim];
+            int size = ((length/ratio > 1) ? (length/ratio) : 1);
+
+            /* initialize send offsets */
+            int j0_remote = i % c0[current_dim];
+            int j2_remote = i / c0[current_dim];
+            int j0_new_remote = i % c1[current_dim];
+            int j2_new_remote = i / c1[current_dim];
+
+            send &= ((j0_local == (j0_new_remote % c0[current_dim]))
+                && (j2_new_remote == j2_local / ratio));
+            recv &= ((j0_remote == (j0_new_local % c0[current_dim]))
+                && (j2_new_local == j2_remote / ratio));
+            if (c1[current_dim] >= length*c0[current_dim])
+                {
+                send &= ((j0_new_remote / (length*c0[current_dim])) == (j2_local % (ratio/length)));
+                recv &= ((j0_new_local / (length*c0[current_dim])) == (j2_remote % (ratio/length)));
+                }
+          
+            /* determine packet length for current dimension */
+            if (c1[current_dim] >= length*c0[current_dim])
+                size = 1;
+            else
+                size = length*c0[current_dim]/c1[current_dim];
+
+            recv_size *= (recv ? size : 0);
+            send_size *= (send ? size : 0);
+            } /* end loop over dimensions */
+
+        nsend[t] = send_size*sizeof(cuda_cpx_t);
+        nrecv[t] = recv_size*sizeof(cuda_cpx_t);
+        offset_send[t] = soffs*sizeof(cuda_cpx_t);
+        offset_recv[t] = roffs*sizeof(cuda_cpx_t);
+        roffs += recv_size;
+        soffs += send_size;
+        } /* end loop over processors */
+
+    cudaMemcpy(d_c0, c0, sizeof(int)*ndim,cudaMemcpyDefault);
+    cudaMemcpy(d_c1, c1, sizeof(int)*ndim,cudaMemcpyDefault);
+
+    /* pack data */
+    gpu_b2c_pack_nd(size_in, d_c0, d_c1, ndim, d_embed,
+        d_length, row_m, d_work, d_scratch);
+    if (check_err) CHECK_CUDA();
+
+    /* synchronize */
+    MPI_Barrier(comm);
+
+    /* communicate */
+    #ifdef ENABLE_MPI_CUDA
+    MPI_Alltoallv(d_scratch,nsend, offset_send, MPI_BYTE,
+                  d_scratch_2, nrecv, offset_recv, MPI_BYTE,
+                  comm);
+    #else
+    // stage into host buf
+    cudaMemcpy(h_stage_in, d_scratch, sizeof(cuda_cpx_t)*npackets*size,cudaMemcpyDefault); 
+    if (check_err) CHECK_CUDA();
+
+    MPI_Alltoallv(h_stage_in,nsend, offset_send, MPI_BYTE,
+                  h_stage_out,nrecv, offset_recv, MPI_BYTE,
+                  comm);
+
+    // copy back received data
+    cudaMemcpy(d_scratch_2,h_stage_out, sizeof(cuda_cpx_t)*size_in,cudaMemcpyDefault); 
+    if (check_err) CHECK_CUDA();
+    #endif
+
+    /* unpack data */
+    gpu_b2c_unpack_nd(size_in, d_c0, d_c1, ndim, d_embed, d_length,
+        row_m, d_scratch_2, d_work);
+    if (check_err) CHECK_CUDA();
+    }
+
+
+/*
  * Redistribute from group-cyclic with cycle c0 to cycle c1>=c0
  */
 void dfft_cuda_redistribute_block_to_cyclic_1d(
@@ -550,14 +711,23 @@ void cuda_redistribute_nd(int *dim,
             int* pidx,
             int size,
             int *embed,
+            int *c0,
+            int *c1,
+            int *d_c0,
+            int *d_c1,
+            int *d_pidx,
+            int *d_pdim,
+            int *d_embed,
+            int *d_length,
             cuda_cpx_t *d_work,
             cuda_cpx_t *d_scratch,
+            cuda_cpx_t *d_scratch_2,
             cuda_cpx_t *h_stage_in,
             cuda_cpx_t *h_stage_out,
-            int *dfft_nsend,
-            int *dfft_nrecv,
-            int *dfft_offset_send,
-            int *dfft_offset_recv,
+            int *nsend,
+            int *nrecv,
+            int *offset_send,
+            int *offset_recv,
             int c2b,
             MPI_Comm comm,
             int check_err,int row_m)
@@ -565,24 +735,43 @@ void cuda_redistribute_nd(int *dim,
     cuda_cpx_t *cur_work =d_work;
     cuda_cpx_t *cur_scratch =d_scratch;
 
+    if (!c2b)
+        {
+        int i;
+        for (i = 0; i < ndim; ++i)
+            {
+            /* block to cyclic */
+            c0[i] = 1;
+            c1[i] = pdim[i];
+            }
+
+        dfft_cuda_redistribute_block_to_cyclic_nd(dim,pdim,ndim, c0,
+                  c1, pidx, size, embed, d_c0, d_c1, d_pidx,
+                  d_pdim, d_embed, d_length, d_work, d_scratch,
+                  d_scratch_2, h_stage_in, h_stage_out, nsend,
+                  nrecv, offset_send, offset_recv, comm,
+                  check_err, row_m);
+        return;
+        }
+ 
     int current_dim;
     for (current_dim = 0; current_dim < ndim; ++current_dim)
         {
         /* redistribute along one dimension (in-place) */
         if (!c2b)
+            {
             dfft_cuda_redistribute_block_to_cyclic_1d(dim, pdim, ndim,
                 current_dim, 1, pdim[current_dim], pidx, size, embed,
                 cur_work, cur_scratch, h_stage_in, h_stage_out,
-                dfft_nsend,dfft_nrecv,
-                dfft_offset_send, dfft_offset_recv, comm,
+                nsend,nrecv, offset_send, offset_recv, comm,
                 check_err,row_m);
+            }
         else
             dfft_cuda_redistribute_cyclic_to_block_1d(dim, pdim, ndim,
                 current_dim, pdim[current_dim], 1, pidx, 0, size, embed,
                 cur_work, cur_scratch, h_stage_in, h_stage_out,
-                NULL, NULL, dfft_nsend, dfft_nrecv, dfft_offset_send,
-                dfft_offset_recv, comm,
-                check_err,row_m);
+                NULL, NULL, nsend, nrecv, offset_send,
+                offset_recv, comm, check_err,row_m);
         
         int l = dim[current_dim]/pdim[current_dim];
         int stride = size/embed[current_dim];
@@ -635,7 +824,9 @@ int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan p)
         {
         /* redistribution of input */
         cuda_redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
-            p.size_in, p.inembed, d_work, d_scratch, p.h_stage_in,
+            p.size_in, p.inembed, p.c0, p.c1, p.d_c0, p.d_c1,
+            p.d_pidx, p.d_pdim, p.d_iembed, p.d_length,
+            d_work, d_scratch, p.d_scratch_3, p.h_stage_in,
             p.h_stage_out, p.nsend,p.nrecv, p.offset_send,
             p.offset_recv, 0, p.comm,check_err,p.row_m); 
         }
@@ -653,9 +844,11 @@ int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan p)
         {
         /* redistribution of output */
         cuda_redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
-            p.size_out,p.oembed, d_work, d_scratch, p.h_stage_in, p.h_stage_out,
-            p.nsend,p.nrecv, p.offset_send,p.offset_recv, 1, p.comm,check_err,
-            p.row_m); 
+            p.size_out, p.oembed, p.c0, p.c1, p.d_c0, p.d_c1,
+            p.d_pidx, p.d_pdim, p.d_oembed, p.d_length,
+            d_work, d_scratch, p.d_scratch_3, p.h_stage_in,
+            p.h_stage_out, p.nsend,p.nrecv, p.offset_send,
+            p.offset_recv, 1, p.comm,check_err,p.row_m); 
         }
 
     if (out_of_place)
@@ -690,9 +883,45 @@ int dfft_cuda_create_plan(dfft_plan *p,
     posix_memalign((void **)&(p->h_stage_in),page_size,size);
     posix_memalign((void **)&(p->h_stage_out),page_size,size);
     cudaHostRegister(p->h_stage_in, size, cudaHostAllocDefault);
+    CHECK_CUDA();
     cudaHostRegister(p->h_stage_out, size, cudaHostAllocDefault);
+    CHECK_CUDA();
     #endif
-    return 0;
+
+    /* allocate memory for passing variables */
+    cudaMalloc((void **)&(p->d_c0), sizeof(int)*ndim);
+    CHECK_CUDA();
+    cudaMalloc((void **)&(p->d_c1), sizeof(int)*ndim);
+    CHECK_CUDA();
+    cudaMalloc((void **)&(p->d_pidx), sizeof(int)*ndim);
+    CHECK_CUDA();
+    cudaMalloc((void **)&(p->d_pdim), sizeof(int)*ndim);
+    CHECK_CUDA();
+    cudaMalloc((void **)&(p->d_iembed), sizeof(int)*ndim);
+    CHECK_CUDA();
+    cudaMalloc((void **)&(p->d_oembed), sizeof(int)*ndim);
+    CHECK_CUDA();
+    cudaMalloc((void **)&(p->d_length), sizeof(int)*ndim);
+    CHECK_CUDA();
+
+    /* initialize cuda buffers */
+    int *h_length = (int *)malloc(sizeof(int)*ndim);
+    int i;
+    for (i = 0; i < ndim; ++i)
+        h_length[i] = gdim[i]/pdim[i];
+    cudaMemcpy(p->d_pidx, pidx, sizeof(int)*ndim, cudaMemcpyDefault); 
+    CHECK_CUDA();
+    cudaMemcpy(p->d_pdim, pdim, sizeof(int)*ndim, cudaMemcpyDefault); 
+    CHECK_CUDA();
+    cudaMemcpy(p->d_iembed, p->inembed, sizeof(int)*ndim, cudaMemcpyDefault); 
+    CHECK_CUDA();
+    cudaMemcpy(p->d_oembed, p->oembed, sizeof(int)*ndim, cudaMemcpyDefault); 
+    CHECK_CUDA();
+    cudaMemcpy(p->d_length, h_length, sizeof(int)*ndim, cudaMemcpyDefault); 
+    CHECK_CUDA();
+    free(h_length);
+
+    return res;
     } 
 
 void dfft_cuda_destroy_plan(dfft_plan plan)
@@ -704,6 +933,14 @@ void dfft_cuda_destroy_plan(dfft_plan plan)
     free(plan.h_stage_in);
     free(plan.h_stage_out);
     #endif
+
+    cudaFree(plan.d_c0);
+    cudaFree(plan.d_c1);
+    cudaFree(plan.d_pidx);
+    cudaFree(plan.d_pdim);
+    cudaFree(plan.d_iembed);
+    cudaFree(plan.d_oembed);
+    cudaFree(plan.d_length);
     }
 
 void dfft_cuda_check_errors(dfft_plan *plan, int check_err)

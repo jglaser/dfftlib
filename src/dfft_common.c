@@ -279,6 +279,7 @@ int dfft_create_plan_common(dfft_plan *p,
         #ifdef ENABLE_HOST
         dfft_allocate_aligned_memory(&(p->scratch),sizeof(cpx_t)*scratch_size);
         dfft_allocate_aligned_memory(&(p->scratch_2),sizeof(cpx_t)*scratch_size);
+        dfft_allocate_aligned_memory(&(p->scratch_3),sizeof(cpx_t)*scratch_size);
         #else
         return 3;
         #endif
@@ -288,6 +289,7 @@ int dfft_create_plan_common(dfft_plan *p,
         #ifdef ENABLE_CUDA
         dfft_cuda_allocate_aligned_memory(&(p->d_scratch),sizeof(cuda_cpx_t)*scratch_size);
         dfft_cuda_allocate_aligned_memory(&(p->d_scratch_2),sizeof(cuda_cpx_t)*scratch_size);
+        dfft_cuda_allocate_aligned_memory(&(p->d_scratch_3),sizeof(cuda_cpx_t)*scratch_size);
         #else
         return 2;
         #endif
@@ -301,6 +303,8 @@ int dfft_create_plan_common(dfft_plan *p,
     p->check_cuda_errors = 0;
     #endif
 
+    p->c0 = (int *) malloc(sizeof(int)*ndim);
+    p->c1 = (int *) malloc(sizeof(int)*ndim);
     p->row_m = row_m;
     return 0;
     } 
@@ -354,11 +358,14 @@ void dfft_destroy_plan_common(dfft_plan p, int device)
     free(p.pdim);
     free(p.gdim);
 
+    free(p.c0);
+    free(p.c1);
     if (!device)
         {
         #ifdef ENABLE_HOST
         dfft_free_aligned_memory(p.scratch);
         dfft_free_aligned_memory(p.scratch_2);
+        dfft_free_aligned_memory(p.scratch_3);
         dfft_teardown_local_fft();
         #endif
         }
@@ -367,6 +374,7 @@ void dfft_destroy_plan_common(dfft_plan p, int device)
         #ifdef ENABLE_CUDA
         dfft_cuda_free_aligned_memory(p.d_scratch);
         dfft_cuda_free_aligned_memory(p.d_scratch_2);
+        dfft_cuda_free_aligned_memory(p.d_scratch_3);
         dfft_cuda_teardown_local_fft();
         #endif
         }

@@ -2,6 +2,211 @@
 #include "dfft_cuda.cuh"
 
 // redistribute between group-cyclic distributions with different cycles
+// (direction from block to cyclic) n-dimensional version
+__global__ void gpu_b2c_pack_kernel_nd(unsigned int local_size,
+                                    int *d_c0,
+                                    int *d_c1,
+                                    int ndim,
+                                    int *d_embed,
+                                    int *d_length,
+                                    int row_m,
+                                    const cuda_cpx_t *local_data,
+                                    cuda_cpx_t *send_data
+                                    )
+    {
+    extern __shared__ int nidx_shared[];
+    // index of local component
+    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // do not read beyond end of array
+    if (idx >= local_size) return;
+
+    // determine local coordinate tuple
+    int *nidx = &nidx_shared[threadIdx.x*ndim];
+
+    int tmp = idx;
+    for (int i = ndim-1; i >= 0; --i)
+        {
+        int embed = d_embed[i];
+        nidx[i] = tmp % embed;
+        tmp /= embed;
+        int l = d_length[i];
+        if (nidx[i] >= l) return;
+        }
+
+
+    // determine index of packet and index in packet
+    int lidx = 0;
+    int size_tot = 1;
+    tmp = 1;
+    int packet_idx = 0; 
+    for (int i = 0; i <ndim; ++i)
+        {
+        int c0 = d_c0[i];
+        int c1 = d_c1[i];
+        int ratio = c1/c0;
+        int l = d_length[i];
+        int size = ((l/ratio > 1) ? (l/ratio) : 1);
+
+        lidx *= size;
+        lidx += nidx[i]/ratio; // index in packet in column-major
+        int num_packets = l/size;
+        if (!row_m)
+            {
+            packet_idx *= num_packets;
+            packet_idx += (nidx[i] % ratio);
+            }
+        else
+            {
+            packet_idx += tmp*(nidx[i] % ratio);
+            tmp *= num_packets;
+            }
+        size_tot *= size;
+        }
+
+    send_data[packet_idx*size_tot+lidx] = local_data[idx];
+    }
+
+// redistribute between group-cyclic distributions with different cycles
+// (direction from block to cyclic) n-dimensional version, unpack kernel
+__global__ void gpu_b2c_unpack_kernel_nd(unsigned int local_size,
+                                    int *d_c0,
+                                    int *d_c1,
+                                    int ndim,
+                                    int *d_embed,
+                                    int *d_length,
+                                    int row_m,
+                                    const cuda_cpx_t *recv_data,
+                                    cuda_cpx_t *local_data
+                                    )
+    {
+    extern __shared__ int idx_shared[];
+    // index of local component
+    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // do not read beyond end of array
+    if (idx >= local_size) return;
+
+    int packet_idx = 0;
+
+    int tmp = 1; 
+    int tmp_packet = 1;
+
+    // index in packet
+    int lidx = 0;
+
+    int size = 1; // packet size
+    int j = idx;
+    for (int i = ndim-1; i>= 0; --i)
+        {
+        int l = d_length[i];
+        int c0 = d_c0[i];
+        int c1 = d_c1[i];
+        int ratio = c1/c0;
+        int embed = d_embed[i];
+        
+        // determine local index in current dimension
+        int j1 = j % embed;
+        j /= embed;
+        if (j1 >= l) return; // do not fill outer embedding layer
+        
+        // determine packet idx along current dimension
+        // and index in packet
+        int lpidx;
+        int num_packets;
+        int lidxi; // index in packet
+        int sizei;
+        if (l >= ratio)
+            {
+            num_packets = ratio;
+            sizei = l/ratio;
+            lidxi = j1 % sizei;
+            lpidx = j1 / sizei;
+            }
+        else
+            {
+            lpidx = j1;
+            num_packets = l;
+            sizei = 1;
+            lidxi = 0;
+            }
+        
+        if (!row_m)
+            {
+            /* packets in column major order */
+            packet_idx += tmp*lpidx;
+            tmp *= num_packets;
+            }
+        else
+            {
+            /* packets in row-major order */
+            packet_idx *= num_packets;
+            packet_idx += lpidx;
+            }
+
+        // inside packet: column-major
+        lidx += tmp_packet*lidxi;
+        tmp_packet *= sizei;
+        size *= sizei;
+        }
+
+    local_data[idx] = recv_data[packet_idx*size + lidx];
+    }
+
+void gpu_b2c_pack_nd(unsigned int local_size,
+                     int *d_c0,
+                     int *d_c1,
+                     int ndim,
+                     int *d_embed,
+                     int *d_length,
+                     int row_m,
+                     const cuda_cpx_t *local_data,
+                     cuda_cpx_t *send_data
+                     )
+    {
+    unsigned int block_size =512;
+    unsigned int n_blocks = local_size/block_size;
+    if (local_size % block_size) n_blocks++;
+
+    int shared_size = ndim*block_size*sizeof(int);
+    gpu_b2c_pack_kernel_nd<<<n_blocks, block_size,shared_size>>>(local_size,
+                                                  d_c0,
+                                                  d_c1,
+                                                  ndim,
+                                                  d_embed,
+                                                  d_length,
+                                                  row_m,
+                                                  local_data,
+                                                  send_data);
+    }
+
+void gpu_b2c_unpack_nd(unsigned int local_size,
+                     int *d_c0,
+                     int *d_c1,
+                     int ndim,
+                     int *d_embed,
+                     int *d_length,
+                     int row_m,
+                     const cuda_cpx_t *recv_data,
+                     cuda_cpx_t *local_data
+                     )
+    {
+    unsigned int block_size =512;
+    unsigned int n_blocks = local_size/block_size;
+    if (local_size % block_size) n_blocks++;
+
+    gpu_b2c_unpack_kernel_nd<<<n_blocks, block_size>>>(local_size,
+                             d_c0,
+                             d_c1,
+                             ndim,
+                             d_embed,
+                             d_length,
+                             row_m,
+                             recv_data,
+                             local_data);
+    } 
+
+// redistribute between group-cyclic distributions with different cycles
 // (direction from block to cyclic)
 __global__ void gpu_b2c_pack_kernel(unsigned int local_size,
                                     unsigned int ratio,

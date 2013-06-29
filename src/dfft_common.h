@@ -49,12 +49,14 @@ typedef struct
 
     #ifdef ENABLE_HOST
     cpx_t *scratch;       /* Scratch array */
-    cpx_t *scratch_2;     /* Scratch array */
+    cpx_t *scratch_2;
+    cpx_t *scratch_3;
     #endif
 
     #ifdef ENABLE_CUDA
     cuda_cpx_t *d_scratch;   /* Scratch array */
-    cuda_cpx_t *d_scratch_2; /* Scratch array */
+    cuda_cpx_t *d_scratch_2;
+    cuda_cpx_t *d_scratch_3;
     cuda_cpx_t *h_stage_in;  /* Staging array for MPI calls */
     cuda_cpx_t *h_stage_out; /* Staging array for MPI calls */
     #endif 
@@ -77,6 +79,19 @@ typedef struct
     #endif
 
     int row_m;            /* ==1 If we are using row-major procesor id mapping */
+
+    int *c0;              /* variables for redistribution */
+    int *c1;
+
+    #ifdef ENABLE_CUDA
+    int *d_c0;            /* Device memory for passing variables for redistribution kernels */
+    int *d_c1;
+    int *d_pidx;
+    int *d_pdim;
+    int *d_iembed;
+    int *d_oembed;
+    int *d_length;
+    #endif
     } dfft_plan;
 
 /*

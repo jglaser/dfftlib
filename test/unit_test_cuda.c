@@ -129,6 +129,7 @@ void test_distributed_fft_nd(int nd)
         pidx[0] =s;
         dfft_cuda_create_plan(&plan_1, nd, dim_glob, NULL, NULL, pdim, pidx,
             0, 0, 0, MPI_COMM_WORLD);
+        dfft_cuda_check_errors(&plan_1,1);
 
         /* forward transform */
         dfft_cuda_execute(in_1_d, in_1_d, 0, plan_1);
@@ -183,6 +184,7 @@ void test_distributed_fft_nd(int nd)
   
     dfft_plan plan_2;
     dfft_cuda_create_plan(&plan_2, nd, dim_glob, NULL, NULL, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_check_errors(&plan_2,1);
 
     /* forward transfom */
     dfft_cuda_execute(in_2_d, in_2_d, 0, plan_2);
@@ -288,7 +290,9 @@ void test_distributed_fft_nd(int nd)
 
     dfft_plan plan_3_fw,plan_3_bw;
     dfft_cuda_create_plan(&plan_3_fw, nd, dim_glob, inembed, NULL, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_check_errors(&plan_3_fw,1);
     dfft_cuda_create_plan(&plan_3_bw, nd, dim_glob, NULL, inembed, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_check_errors(&plan_3_bw,1);
    
     int offset = 0;
     int n_ghost = 2;
@@ -422,6 +426,7 @@ void test_distributed_fft_1d_compare(int n)
     
     dfft_plan plan;
     dfft_cuda_create_plan(&plan,1, dim_glob, NULL, NULL, pdim, pidx,0, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_check_errors(&plan,1);
 
     /* copy data to device */
     cudaMemcpy(in_d, in_h, sizeof(cuda_cpx_t)*n/p, cudaMemcpyDefault);
@@ -582,6 +587,7 @@ void test_distributed_fft_3d_compare()
 
     dfft_plan plan;
     dfft_cuda_create_plan(&plan,3, dim_glob, NULL, NULL, pdim, pidx,0, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_check_errors(&plan,1);
 
     /* copy data to device */
     cudaMemcpy(in_d, in_h, sizeof(cuda_cpx_t)*local_nx*local_ny*local_nz, cudaMemcpyDefault);
