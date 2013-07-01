@@ -274,7 +274,7 @@ void dfft_cuda_redistribute_nd( dfft_plan *plan, int size_in, int *embed, int *d
     #ifdef ENABLE_MPI_CUDA
     MPI_Alltoallv(plan->d_scratch,plan->nsend, plan->offset_send, MPI_BYTE,
                   plan->d_scratch_2, plan->nrecv, plan->offset_recv, MPI_BYTE,
-                  p->comm);
+                  plan->comm);
     #else
     // stage into host buf
     cudaMemcpy(plan->h_stage_in, plan->d_scratch, sizeof(cuda_cpx_t)*size_in,cudaMemcpyDefault); 
