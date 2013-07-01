@@ -80,12 +80,12 @@ typedef struct
 
     int row_m;            /* ==1 If we are using row-major procesor id mapping */
 
-    int *c0;              /* variables for redistribution */
-    int *c1;
+    int **c0;             /* variables for redistribution, per stage and dimension */
+    int **c1;
 
     #ifdef ENABLE_CUDA
-    int *d_c0;            /* Device memory for passing variables for redistribution kernels */
-    int *d_c1;
+    int **d_c0;           /* Device memory for passing variables for redistribution kernels */
+    int **d_c1;
     int *d_pidx;
     int *d_pdim;
     int *d_iembed;
@@ -99,21 +99,22 @@ typedef struct
     int *depth;     /* depth of multi-dim dFFT per dimension */
     int *n_fft;     /* number of FFTs at every level */
     int final_multi; /* If the final stage is a multidimensional transform */
-    int *rev_j1, *rev_partial, *rev_global; /* flags to indicate bit reversal per dimension */
+    int **rev_j1, **rev_partial, **rev_global; /* flags to indicate bit reversal per dimension */
     #ifdef ENABLE_CUDA
     cuda_plan_t **cuda_plans_multi_fw; /* Multidimensional plan configuration (forward)*/
     cuda_plan_t **cuda_plans_multi_bw; /* backward plans */
     cuda_plan_t *cuda_plans_final_fw; /* Level-0 plans, forward */
     cuda_plan_t *cuda_plans_final_bw; /* backward plans */
-    cuda_scalar_t *d_alpha;           /* alpha variables for twiddle factors per dim */
-    cuda_scalar_t *h_alpha;           /* host variable */ 
-    int *d_rev_j1, *d_rev_partial, *d_rev_global;  /* bit reversal flags */
+    cuda_scalar_t **d_alpha;          /* alpha variables for twiddle factors per dim */
+    cuda_scalar_t **h_alpha;          /* host variable */ 
+    int **d_rev_j1, **d_rev_partial, **d_rev_global;  /* bit reversal flags */
     #endif
-
 
     #ifdef ENABLE_HOST
     plan_t **plans_multi; 
     #endif
+
+    int init;                         /* ==1 if initialization run is requested */
     } dfft_plan;
 
 /*

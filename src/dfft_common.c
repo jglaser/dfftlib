@@ -70,7 +70,8 @@ int dfft_create_execution_flow(dfft_plan *plan)
         if (d > plan->max_depth) plan->max_depth = d;
         }
 
-    plan->n_fft = malloc(sizeof(int)*plan->max_depth);
+    if (plan->max_depth)
+        plan->n_fft = (int *)malloc(sizeof(int)*plan->max_depth);
 
     /* we always decompose into 1d FFTs when the backend doesn't support
      * multidimensional */
@@ -99,10 +100,13 @@ int dfft_create_execution_flow(dfft_plan *plan)
     #ifdef ENABLE_CUDA
     if (plan->device)
         {
-        plan->cuda_plans_multi_fw =
-            (cuda_plan_t **)malloc(sizeof(cuda_plan_t *)*plan->max_depth);
-        plan->cuda_plans_multi_bw =
-            (cuda_plan_t **)malloc(sizeof(cuda_plan_t *)*plan->max_depth);
+        if (plan->max_depth)
+            {
+            plan->cuda_plans_multi_fw =
+                (cuda_plan_t **)malloc(sizeof(cuda_plan_t *)*plan->max_depth);
+            plan->cuda_plans_multi_bw =
+                (cuda_plan_t **)malloc(sizeof(cuda_plan_t *)*plan->max_depth);
+           }
         }
     #endif
 
@@ -488,10 +492,23 @@ int dfft_create_plan_common(dfft_plan *p,
         /* use multidimensional local transforms */
         dfft_create_execution_flow(p);
 
-        /* allocate bit reversal flag storage */
-        p->rev_j1 = (int *) malloc(sizeof(int)*ndim);
-        p->rev_global = (int *) malloc(sizeof(int)*ndim);
-        p->rev_partial = (int *) malloc(sizeof(int)*ndim);
+        /* allocate storage for variables */
+        int dmax = p->max_depth + 2;
+        p->rev_j1 = (int **) malloc(sizeof(int *)*dmax);
+        p->rev_global = (int **) malloc(sizeof(int *)*dmax);
+        p->rev_partial = (int **) malloc(sizeof(int *)*dmax);
+        p->c0 = (int **) malloc(sizeof(int *)*dmax);
+        p->c1 = (int **) malloc(sizeof(int *)*dmax);
+        int d;
+        for (d = 0; d < dmax; ++d)
+            {
+            p->rev_j1[d] = (int *) malloc(sizeof(int)*ndim);
+            p->rev_global[d] = (int *) malloc(sizeof(int)*ndim);
+            p->rev_partial[d] = (int *) malloc(sizeof(int)*ndim);
+            p->c0[d] = (int *) malloc(sizeof(int)*ndim);
+            p->c1[d] = (int *) malloc(sizeof(int)*ndim);
+            }
+
         p->dfft_multi = 1;
         }
     else
@@ -586,10 +603,13 @@ int dfft_create_plan_common(dfft_plan *p,
     p->check_cuda_errors = 0;
     #endif
     #endif
-
-    p->c0 = (int *) malloc(sizeof(int)*ndim);
-    p->c1 = (int *) malloc(sizeof(int)*ndim);
+    
     p->row_m = row_m;
+
+    /* before plan creation is complete, an initialization run will
+     * be performed */
+    p->init = 1;
+
     return 0;
     } 
 
@@ -642,8 +662,6 @@ void dfft_destroy_plan_common(dfft_plan p, int device)
     free(p.pdim);
     free(p.gdim);
 
-    free(p.c0);
-    free(p.c1);
     if (!device)
         {
         #ifdef ENABLE_HOST
@@ -679,7 +697,23 @@ void dfft_destroy_plan_common(dfft_plan p, int device)
                     #endif
                     }
                 }
-            }
+
+           }
+
+        for (d = 0; d < p.max_depth+2; ++d)
+            {
+            free(p.rev_j1[d]);
+            free(p.rev_partial[d]);
+            free(p.rev_global[d]);
+            free(p.c0[d]);
+            free(p.c1[d]);
+            } 
+        free(p.rev_j1);
+        free(p.rev_partial);
+        free(p.rev_global);
+        free(p.c0);
+        free(p.c1);
+
         int n = (p.final_multi ? 1 : p.ndim);
         for (i = 0; i < n; ++i)
             {
@@ -692,10 +726,7 @@ void dfft_destroy_plan_common(dfft_plan p, int device)
                 }
             }
 
-        free(p.n_fft);
+        if (p.max_depth) free(p.n_fft);
         free(p.depth);
-        free(p.rev_j1);
-        free(p.rev_partial);
-        free(p.rev_global);
         }
     }
