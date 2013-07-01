@@ -90,7 +90,7 @@ void dfft_cuda_redistribute_nd( dfft_plan *plan, int size_in, int *embed, int *d
                 }
             else
                 {
-                i = (tmp % plan->pdim[k]);
+                i = (tmp % plan->pdim[current_dim]);
                 tmp/=plan->pdim[current_dim];
                 }
             int length = plan->gdim[current_dim]/plan->pdim[current_dim];
@@ -919,6 +919,7 @@ void cuda_fftnd_multi(dfft_plan *p,
                 }
             else
                 {
+                p->c1[i] = p->c0[i];
                 p->rev_global[i] = 0;
                 p->rev_partial[i] = 0;
                 p->rev_j1[i] = 0;
