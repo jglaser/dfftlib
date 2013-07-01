@@ -1,9 +1,20 @@
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 #include "dfft_common.h"
 #include "dfft_host.h"
 #include "dfft_cuda.h"
+
+#define CHECK_PLAN_CREATE(res) \
+    {                                                                          \
+    if (res != 0)                                                              \
+        {                                                                      \
+        printf("Plan creation failed, file %s, line %d.\n",__FILE__,__LINE__); \
+        assert(!res);                                                          \
+        exit(1);                                                               \
+        }                                                                      \
+    }
 
 /*****************************************************************************
  * Implementation of common functions for device and host distributed FFT
@@ -37,6 +48,257 @@ void bitrev_init(int n, int *rho)
 /*****************************************************************************
  * Plan management
  *****************************************************************************/
+
+/* create a multidimensional execution plan */
+int dfft_create_execution_flow(dfft_plan *plan)
+    {
+    /* compute depth of parallel fft (number of redistributions/dimension) */
+    plan->depth = malloc(sizeof(int)*plan->ndim);
+    plan->max_depth = 0;
+    int i,d,j;
+    for (i=0; i< plan->ndim; ++i)
+        {
+        d = 0;
+        int p = plan->pdim[i];
+        int l = plan->gdim[i]/p;
+        if (l > 1)
+            {
+            for (j = plan->k0[i]; j <= p; j*=l)
+                d++;
+            }
+        plan->depth[i] = d;
+        if (d > plan->max_depth) plan->max_depth = d;
+        }
+
+    plan->n_fft = malloc(sizeof(int)*plan->max_depth);
+
+    /* we always decompose into 1d FFTs when the backend doesn't support
+     * multidimensional */
+    int decompose_1d = 1 ;
+    #ifdef ENABLE_CUDA
+    if (plan->device)
+        {
+        #ifdef CUDA_FFT_SUPPORTS_MULTI
+        decompose_1d = ((plan->ndim > CUDA_FFT_MAX_N) ? 1 : 0);
+        #else
+        decompose_1d = 1;
+        #endif
+
+        }
+    else
+    #endif
+        {
+        #ifdef HOST_FFT_SUPPORTS_MULTI
+        decompose_1d = 0;
+        #else
+        decompose_1d = 1;
+        #endif
+        }
+
+    /* allocate plans */
+    #ifdef ENABLE_CUDA
+    if (plan->device)
+        {
+        plan->cuda_plans_multi_fw =
+            (cuda_plan_t **)malloc(sizeof(cuda_plan_t *)*plan->max_depth);
+        plan->cuda_plans_multi_bw =
+            (cuda_plan_t **)malloc(sizeof(cuda_plan_t *)*plan->max_depth);
+        }
+    #endif
+
+    /* now create plans for every level, except the lowest */
+    /* this is a general 'vector-radix' implementation */
+    for (d = plan->max_depth-1; d >= 0; d--)
+        {
+        /* count number of ffts at this level in all dimensions */
+        int n = 0;
+        for (i = 0; i < plan->ndim; ++i)
+            if (plan->depth[i] > d) n++;
+       
+        if (n < plan->ndim || decompose_1d)
+            {
+            /* 1D FFT for all 'active' dimensions, transposing as we go */
+            plan->n_fft[d] = plan->ndim;
+
+            /* allocate ndim plans */
+            #ifdef ENABLE_CUDA
+            if (plan->device)
+                {
+                plan->cuda_plans_multi_fw[d] =
+                    (cuda_plan_t *)malloc(sizeof(cuda_plan_t)*plan->ndim);
+                plan->cuda_plans_multi_bw[d] =
+                    (cuda_plan_t *)malloc(sizeof(cuda_plan_t)*plan->ndim);
+                }
+            #endif
+
+            for (i = 0; i< plan->ndim; ++i)
+                {
+                int istride = plan->size_in/plan->inembed[i];
+                int ostride = 1;
+                int idist = 1;
+                int odist = plan->inembed[i];
+                int howmany = plan->size_in/plan->inembed[i];
+
+                /* if at this level, there is no planned FFT along the current
+                 * dimension, just proceed  */
+                int dim;
+                if (plan->depth[i] > d)
+                    {
+                    dim = plan->gdim[i]/plan->pdim[i];
+
+                    #ifdef ENABLE_CUDA
+                    if (plan->device)
+                        {
+                        int res;
+                        res = dfft_cuda_create_1d_plan(&plan->cuda_plans_multi_fw[d][i],
+                            dim, howmany, istride, idist, ostride, odist, 0);
+                        CHECK_PLAN_CREATE(res);
+                        res = dfft_cuda_create_1d_plan(&plan->cuda_plans_multi_bw[d][i],
+                            dim, howmany, istride, idist, ostride, odist, 1);
+                        CHECK_PLAN_CREATE(res);
+                        }
+                    #endif
+                    }
+                }
+            }
+        else
+            {
+            /* all dimensions have equal length, use multidimensinoal FFT */
+            plan->n_fft[d] = 1;
+
+            /* allocate plan */
+            #ifdef ENABLE_CUDA
+            if (plan->device)
+                {
+                plan->cuda_plans_multi_fw[d] =
+                    (cuda_plan_t *)malloc(sizeof(cuda_plan_t));
+                plan->cuda_plans_multi_bw[d] =
+                    (cuda_plan_t *)malloc(sizeof(cuda_plan_t));
+                }
+            #endif
+
+            int *dim = malloc(sizeof(int)*plan->ndim);
+            for (i = 0; i < plan->ndim; ++i)
+                dim[i] = plan->gdim[i]/plan->pdim[i];
+
+            int howmany = 1;
+            /* create multidimensional forward and backward plans */
+            #ifdef ENABLE_CUDA
+            if (plan->device)
+                { 
+                int res;
+                res = dfft_cuda_create_nd_plan(&plan->cuda_plans_multi_fw[d][0],
+                    plan->ndim, dim, howmany,
+                    plan->inembed, 1, 1, plan->inembed, 1, 1, 0);
+                CHECK_PLAN_CREATE(res);
+                res = dfft_cuda_create_nd_plan(&plan->cuda_plans_multi_bw[d][0],
+                    plan->ndim, dim, howmany,
+                    plan->inembed, 1, 1, plan->inembed, 1, 1, 1);
+                CHECK_PLAN_CREATE(res);
+                }
+            #endif
+            free(dim);
+            }
+        } /* end loop over levels */
+
+    /* create plans for final stage */
+    plan->final_multi = 1;
+    if (decompose_1d)
+        {
+        plan->final_multi = 0;
+        }
+    else
+        {
+        /* find out if we are doing a full FFT in every dimension */
+        for (i = 0; i < plan->ndim; ++i)
+            if (! (plan->k0[i] == plan->gdim[i]/plan->pdim[i]))
+                {
+                plan->final_multi = 0;
+                break;
+                }
+        }
+
+    if (!plan->final_multi)
+        {
+        /* again, we proceed by doing partial 1d FFTs dimension-wise,
+         * in between we have to transpose */
+
+        /* allocate plans */
+        #ifdef ENABLE_CUDA
+        if (plan->device)
+            {
+            plan->cuda_plans_final_fw =
+                (cuda_plan_t *)malloc(sizeof(cuda_plan_t)*plan->ndim);
+            plan->cuda_plans_final_bw =
+                (cuda_plan_t *)malloc(sizeof(cuda_plan_t)*plan->ndim);
+            }
+        #endif
+
+        int size = plan->size_in;
+        for (i = 0; i < plan->ndim; ++i)
+            {
+            int s = size/plan->inembed[i] *(plan->gdim[i]/plan->pdim[i]);
+            int dim = plan->k0[i];
+            int howmany = s/(plan->k0[i]);
+            int istride = s/(plan->k0[i]);
+            int idist = 1;
+            int ostride = s/(plan->k0[i]);
+            int odist = 1;
+
+            #ifdef ENABLE_CUDA
+            int res;
+            res = dfft_cuda_create_1d_plan(&plan->cuda_plans_final_fw[i],
+                dim, howmany, istride, idist, ostride, odist, 0);
+            CHECK_PLAN_CREATE(res);
+            res = dfft_cuda_create_1d_plan(&plan->cuda_plans_final_bw[i],
+                dim, howmany, istride, idist, ostride, odist, 1);
+            CHECK_PLAN_CREATE(res);
+            #endif
+
+            /* this time, we change to the output embedding */
+            size /= plan->inembed[i];
+            size *= plan->oembed[i];
+            }
+        }
+    else
+        {
+        /* the final stage is a multidimensional transform */
+        /* allocate plan */
+        #ifdef ENABLE_CUDA
+        if (plan->device)
+            {
+            plan->cuda_plans_final_fw =
+                (cuda_plan_t *)malloc(sizeof(cuda_plan_t));
+            plan->cuda_plans_final_bw =
+                (cuda_plan_t *)malloc(sizeof(cuda_plan_t));
+            }
+        #endif
+
+        int *dim = malloc(sizeof(int)*plan->ndim);
+        for (i = 0; i < plan->ndim; ++i)
+            dim[i] = plan->gdim[i]/plan->pdim[i];
+
+        int howmany = 1;
+        /* create multidimensional forward and backward plans */
+        #ifdef ENABLE_CUDA
+        if (plan->device)
+            {
+            int res;
+            res = dfft_cuda_create_nd_plan(&plan->cuda_plans_final_fw[0],
+                plan->ndim, dim, howmany,
+                plan->inembed, 1, 1, plan->oembed, 1, 1, 0);
+            CHECK_PLAN_CREATE(res);
+            res = dfft_cuda_create_nd_plan(&plan->cuda_plans_final_bw[0],
+                plan->ndim, dim, howmany,
+                plan->inembed, 1, 1, plan->oembed, 1, 1, 1);
+            CHECK_PLAN_CREATE(res);
+            }
+        #endif
+        free(dim);
+        }
+    return 0;
+    }
+
 int dfft_create_plan_common(dfft_plan *p,
     int ndim, int *gdim,
     int *inembed, int *oembed, 
@@ -216,56 +478,75 @@ int dfft_create_plan_common(dfft_plan *p,
     if (res) return 1;
 
     int size = size_in;
-    for (i = 0; i < ndim; ++i)
+
+    p->dfft_multi = 0;
+
+    p->device = device;
+
+    if (device)
         {
-        /* plan for short-distance butterflies */
-        int st = size/p->inembed[i]*(gdim[i]/pdim[i]);
-        if (!device)
+        /* use multidimensional local transforms */
+        dfft_create_execution_flow(p);
+
+        /* allocate bit reversal flag storage */
+        p->rev_j1 = (int *) malloc(sizeof(int)*ndim);
+        p->rev_global = (int *) malloc(sizeof(int)*ndim);
+        p->rev_partial = (int *) malloc(sizeof(int)*ndim);
+        p->dfft_multi = 1;
+        }
+    else
+        {
+        for (i = 0; i < ndim; ++i)
             {
-            #ifdef ENABLE_HOST
-            int howmany = 1;
-            #ifdef FFT1D_SUPPORTS_THREADS
-            howmany = st/(p->k0[i]);
-            #endif
-            dfft_create_1d_plan(&(p->plans_short_forward[i]),p->k0[i],
-                howmany, st/(p->k0[i]), 1, st/(p->k0[i]), 1, 0);
-            dfft_create_1d_plan(&(p->plans_short_inverse[i]),p->k0[i],
-                howmany, st/(p->k0[i]), 1, st/(p->k0[i]), 1, 1);
+            /* plan for short-distance butterflies */
+            int st = size/p->inembed[i]*(gdim[i]/pdim[i]);
+            if (!device)
+                {
+                #ifdef ENABLE_HOST
+                int howmany = 1;
+                #ifdef FFT1D_SUPPORTS_THREADS
+                howmany = st/(p->k0[i]);
+                #endif
+                dfft_create_1d_plan(&(p->plans_short_forward[i]),p->k0[i],
+                    howmany, st/(p->k0[i]), 1, st/(p->k0[i]), 1, 0);
+                dfft_create_1d_plan(&(p->plans_short_inverse[i]),p->k0[i],
+                    howmany, st/(p->k0[i]), 1, st/(p->k0[i]), 1, 1);
 
-            /* plan for long-distance butterflies */
-            int length = gdim[i]/pdim[i];
-            #ifdef FFT1D_SUPPORTS_THREADS
-            howmany = st/length;
-            #endif
-            dfft_create_1d_plan(&(p->plans_long_forward[i]), length,
-                howmany, st/length,1, st/length,1, 0);
-            dfft_create_1d_plan(&(p->plans_long_inverse[i]), length,
-                howmany, st/length,1, st/length,1, 1);
-            #else
-            return 3;
-            #endif
+                /* plan for long-distance butterflies */
+                int length = gdim[i]/pdim[i];
+                #ifdef FFT1D_SUPPORTS_THREADS
+                howmany = st/length;
+                #endif
+                dfft_create_1d_plan(&(p->plans_long_forward[i]), length,
+                    howmany, st/length,1, st/length,1, 0);
+                dfft_create_1d_plan(&(p->plans_long_inverse[i]), length,
+                    howmany, st/length,1, st/length,1, 1);
+                #else
+                return 3;
+                #endif
+                }
+            else
+                {
+                #ifdef ENABLE_CUDA
+                dfft_cuda_create_1d_plan(&(p->cuda_plans_short_forward[i]),p->k0[i],
+                    st/(p->k0[i]), st/(p->k0[i]), 1, st/(p->k0[i]), 1, 0);
+                dfft_cuda_create_1d_plan(&(p->cuda_plans_short_inverse[i]),p->k0[i],
+                    st/(p->k0[i]), st/(p->k0[i]), 1, st/(p->k0[i]), 1, 1);
+
+                /* plan for long-distance butterflies */
+                int length = gdim[i]/pdim[i];
+                dfft_cuda_create_1d_plan(&(p->cuda_plans_long_forward[i]), length,
+                    st/length, st/length,1, st/length,1, 0);
+                dfft_cuda_create_1d_plan(&(p->cuda_plans_long_inverse[i]), length,
+                    st/length, st/length,1, st/length,1, 1);
+                #else
+                return 2;
+                #endif
+                }
+
+            size /= p->inembed[i];
+            size *= p->oembed[i];
             }
-        else
-            {
-            #ifdef ENABLE_CUDA
-            dfft_cuda_create_1d_plan(&(p->cuda_plans_short_forward[i]),p->k0[i],
-                st/(p->k0[i]), st/(p->k0[i]), 1, st/(p->k0[i]), 1, 0);
-            dfft_cuda_create_1d_plan(&(p->cuda_plans_short_inverse[i]),p->k0[i],
-                st/(p->k0[i]), st/(p->k0[i]), 1, st/(p->k0[i]), 1, 1);
-
-            /* plan for long-distance butterflies */
-            int length = gdim[i]/pdim[i];
-            dfft_cuda_create_1d_plan(&(p->cuda_plans_long_forward[i]), length,
-                st/length, st/length,1, st/length,1, 0);
-            dfft_cuda_create_1d_plan(&(p->cuda_plans_long_inverse[i]), length,
-                st/length, st/length,1, st/length,1, 1);
-            #else
-            return 2;
-            #endif
-            }
-
-        size /= p->inembed[i];
-        size *= p->oembed[i];
         }
 
     /* Allocate scratch space */
@@ -298,9 +579,12 @@ int dfft_create_plan_common(dfft_plan *p,
     p->input_cyclic = input_cyclic;
     p->output_cyclic = output_cyclic;
 
-    p->device = device;
     #ifdef ENABLE_CUDA
+    #ifndef NDEBUG
+    p->check_cuda_errors = 1;
+    #else
     p->check_cuda_errors = 0;
+    #endif
     #endif
 
     p->c0 = (int *) malloc(sizeof(int)*ndim);
@@ -330,10 +614,10 @@ void dfft_destroy_plan_common(dfft_plan p, int device)
         else
             {
             #ifdef ENABLE_CUDA
-            dfft_cuda_destroy_1d_plan(&p.cuda_plans_short_forward[i]);
-            dfft_cuda_destroy_1d_plan(&p.cuda_plans_short_inverse[i]);
-            dfft_cuda_destroy_1d_plan(&p.cuda_plans_long_forward[i]);
-            dfft_cuda_destroy_1d_plan(&p.cuda_plans_long_inverse[i]);
+            dfft_cuda_destroy_local_plan(&p.cuda_plans_short_forward[i]);
+            dfft_cuda_destroy_local_plan(&p.cuda_plans_short_inverse[i]);
+            dfft_cuda_destroy_local_plan(&p.cuda_plans_long_forward[i]);
+            dfft_cuda_destroy_local_plan(&p.cuda_plans_long_inverse[i]);
             #endif
             } 
         }
@@ -379,4 +663,39 @@ void dfft_destroy_plan_common(dfft_plan p, int device)
         #endif
         }
 
+    if (p.dfft_multi)
+        {
+        int d;
+        for (d = 0; d < p.max_depth; ++d)
+            {
+            int j;
+            for (j = 0; j < p.n_fft[d]; ++j)
+                {
+                if (p.device)
+                    {
+                    #ifdef ENABLE_CUDA
+                    dfft_cuda_destroy_local_plan(&p.cuda_plans_multi_fw[d][j]);
+                    dfft_cuda_destroy_local_plan(&p.cuda_plans_multi_bw[d][j]);
+                    #endif
+                    }
+                }
+            }
+        int n = (p.final_multi ? 1 : p.ndim);
+        for (i = 0; i < n; ++i)
+            {
+            if (p.device)
+                {
+                #ifdef ENABLE_CUDA
+                dfft_cuda_destroy_local_plan(&p.cuda_plans_final_fw[i]);
+                dfft_cuda_destroy_local_plan(&p.cuda_plans_final_bw[i]);
+                #endif
+                }
+            }
+
+        free(p.n_fft);
+        free(p.depth);
+        free(p.rev_j1);
+        free(p.rev_partial);
+        free(p.rev_global);
+        }
     }

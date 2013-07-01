@@ -8,11 +8,17 @@
 #include <cufft.h>
 #include <cuda_runtime.h>
 
+typedef float cuda_scalar_t;
 typedef cufftComplex cuda_cpx_t;
 typedef cufftHandle cuda_plan_t;
 
 #define CUDA_RE(X) X.x
 #define CUDA_IM(X) X.y
+
+/* this library supports a multidimensional transform */
+#define CUDA_FFT_SUPPORTS_MULTI
+/* maximum dimensionality the library can transform locally */
+#define CUDA_FFT_MAX_N 3
 
 #ifndef NVCC
 
@@ -24,9 +30,7 @@ int dfft_cuda_init_local_fft();
  */
 void dfft_cuda_teardown_local_fft();
 
-/* Create a FFTW plan
- *
- * sign = 0 (forward) or 1 (inverse)
+/* Create a one-dimensional CUFFT plan
  */
 int dfft_cuda_create_1d_plan(
     cuda_plan_t *plan,
@@ -38,21 +42,33 @@ int dfft_cuda_create_1d_plan(
     int odist,
     int dir);
 
+/* Create a n-dimensional CUFFT plan
+ * Input is in column-major
+ */
+int dfft_cuda_create_nd_plan(
+    cuda_plan_t *plan,
+    int ndim,
+    int *dim,
+    int howmany,
+    int *iembed,
+    int istride,
+    int idist,
+    int *oembed,
+    int ostride,
+    int odist,
+    int dir);
+
 int dfft_cuda_allocate_aligned_memory(cuda_cpx_t **ptr, size_t size);
 
 void dfft_cuda_free_aligned_memory(cuda_cpx_t *ptr);
 
-/* Destroy a 1d plan */
-void dfft_cuda_destroy_1d_plan(cuda_plan_t *p);
+/* Destroy a plan */
+void dfft_cuda_destroy_local_plan(cuda_plan_t *p);
 
 /*
  * Excecute a local 1D FFT
  */
-void dfft_cuda_local_1dfft(
-    cuda_cpx_t *in,
-    cuda_cpx_t *out,
-    cuda_plan_t p,
-    int dir);
+int dfft_cuda_local_fft( cuda_cpx_t *in, cuda_cpx_t *out, cuda_plan_t p, int dir);
 
 #endif /* NVCC */
 #endif

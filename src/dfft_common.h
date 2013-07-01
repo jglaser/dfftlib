@@ -92,6 +92,28 @@ typedef struct
     int *d_oembed;
     int *d_length;
     #endif
+
+    /* variables for multidimensional plans */
+    int dfft_multi; /* == 1 if multidimensional local FFTs are used */
+    int max_depth;  /* maximal number of redistributions per dimension */
+    int *depth;     /* depth of multi-dim dFFT per dimension */
+    int *n_fft;     /* number of FFTs at every level */
+    int final_multi; /* If the final stage is a multidimensional transform */
+    int *rev_j1, *rev_partial, *rev_global; /* flags to indicate bit reversal per dimension */
+    #ifdef ENABLE_CUDA
+    cuda_plan_t **cuda_plans_multi_fw; /* Multidimensional plan configuration (forward)*/
+    cuda_plan_t **cuda_plans_multi_bw; /* backward plans */
+    cuda_plan_t *cuda_plans_final_fw; /* Level-0 plans, forward */
+    cuda_plan_t *cuda_plans_final_bw; /* backward plans */
+    cuda_scalar_t *d_alpha;           /* alpha variables for twiddle factors per dim */
+    cuda_scalar_t *h_alpha;           /* host variable */ 
+    int *d_rev_j1, *d_rev_partial, *d_rev_global;  /* bit reversal flags */
+    #endif
+
+
+    #ifdef ENABLE_HOST
+    plan_t **plans_multi; 
+    #endif
     } dfft_plan;
 
 /*

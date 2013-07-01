@@ -132,10 +132,10 @@ void test_distributed_fft_nd(int nd)
         dfft_cuda_check_errors(&plan_1,1);
 
         /* forward transform */
-        dfft_cuda_execute(in_1_d, in_1_d, 0, plan_1);
+        dfft_cuda_execute(in_1_d, in_1_d, 0, &plan_1);
 
         /* backward transform */
-        dfft_cuda_execute(in_1_d, in_1_d, 1, plan_1);
+        dfft_cuda_execute(in_1_d, in_1_d, 1, &plan_1);
 
         /* copy back to host */
         cudaMemcpy(in_1_h, in_1_d, sizeof(cuda_cpx_t)*1,cudaMemcpyDefault);
@@ -187,10 +187,10 @@ void test_distributed_fft_nd(int nd)
     dfft_cuda_check_errors(&plan_2,1);
 
     /* forward transfom */
-    dfft_cuda_execute(in_2_d, in_2_d, 0, plan_2);
+    dfft_cuda_execute(in_2_d, in_2_d, 0, &plan_2);
 
     /* inverse transform */
-    dfft_cuda_execute(in_2_d, in_2_d, 1, plan_2);
+    dfft_cuda_execute(in_2_d, in_2_d, 1, &plan_2);
 
     /* copy back to host */
     cudaMemcpy(in_2_h, in_2_d, sizeof(cuda_cpx_t)*size_2n, cudaMemcpyDefault);
@@ -303,10 +303,10 @@ void test_distributed_fft_nd(int nd)
         }
 
     /* forward transform */
-    dfft_cuda_execute(in_3_d+offset, out_3_d, 0, plan_3_fw);
+    dfft_cuda_execute(in_3_d+offset, out_3_d, 0, &plan_3_fw);
         
     /* inverse transform */
-    dfft_cuda_execute(out_3_d,in_3_d+offset, 1, plan_3_bw);
+    dfft_cuda_execute(out_3_d,in_3_d+offset, 1, &plan_3_bw);
 
     /* copy data back to host */
     cudaMemcpy(in_3_h, in_3_d, sizeof(cuda_cpx_t)*size_4n_embed,cudaMemcpyDefault);
@@ -432,7 +432,7 @@ void test_distributed_fft_1d_compare(int n)
     cudaMemcpy(in_d, in_h, sizeof(cuda_cpx_t)*n/p, cudaMemcpyDefault);
 
     /* forward transform */
-    dfft_cuda_execute(in_d, out_d, 0, plan);
+    dfft_cuda_execute(in_d, out_d, 0, &plan);
 
     /* copy data back to host */
     cudaMemcpy(out_h, out_d, sizeof(cuda_cpx_t)*n/p, cudaMemcpyDefault);
@@ -593,7 +593,7 @@ void test_distributed_fft_3d_compare()
     cudaMemcpy(in_d, in_h, sizeof(cuda_cpx_t)*local_nx*local_ny*local_nz, cudaMemcpyDefault);
 
     // forward transform
-    dfft_cuda_execute(in_d, out_d, 0, plan);
+    dfft_cuda_execute(in_d, out_d, 0, &plan);
 
     /* copy data back to host */
     cudaMemcpy(out_h, out_d, sizeof(cuda_cpx_t)*local_nx*local_ny*local_nz, cudaMemcpyDefault);

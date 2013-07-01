@@ -80,7 +80,6 @@ __global__ void gpu_b2c_unpack_kernel_nd(unsigned int local_size,
                                     cuda_cpx_t *local_data
                                     )
     {
-    extern __shared__ int idx_shared[];
     // index of local component
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -206,6 +205,20 @@ void gpu_b2c_unpack_nd(unsigned int local_size,
                              local_data);
     } 
 
+__device__ unsigned int bit_reverse(unsigned int in,
+                                    unsigned int pow_of_two)
+    {
+    unsigned int rev = 0;
+    unsigned int pow = pow_of_two;
+    for (unsigned int i = 0; pow > 1; i++)
+        {
+         pow /= 2;
+         rev *= 2;
+         rev += ((in & (1 << i)) ? 1 : 0);
+        }
+    return rev;
+    }
+
 // redistribute between group-cyclic distributions with different cycles 
 // c0 >= c1, n-dimensional version
 __global__ void gpu_c2b_pack_kernel_nd(unsigned int local_size,
@@ -215,6 +228,9 @@ __global__ void gpu_c2b_pack_kernel_nd(unsigned int local_size,
                                     int *d_embed,
                                     int *d_length,
                                     int row_m,
+                                    int *d_pdim,
+                                    int *d_rev_j1,
+                                    int *d_rev,
                                     const cuda_cpx_t *local_data,
                                     cuda_cpx_t *send_data
                                     )
@@ -237,7 +253,8 @@ __global__ void gpu_c2b_pack_kernel_nd(unsigned int local_size,
         tmp /= embed;
         int l = d_length[i];
         if (nidx[i] >= l) return;
-        }
+
+       }
 
 
     // determine index of packet and index in packet
@@ -251,21 +268,58 @@ __global__ void gpu_c2b_pack_kernel_nd(unsigned int local_size,
         int c1 = d_c1[i];
         int ratio = c0/c1;
         int l = d_length[i];
-        int size = ((l/ratio > 1) ? (l/ratio) : 1);
-
-        lidx *= size;
-        lidx += (nidx[i]%size); // index in packet in column-major
-        int num_packets = l/size;
-        if (!row_m)
+        int size;
+        int j1 = nidx[i];
+        int lpidx;
+        int num_packets;
+        int rev_j1 = d_rev_j1[i];
+        int rev_global = d_rev[i];
+        if (rev_j1) j1= bit_reverse(j1, l);
+        if (! rev_global)
             {
-            packet_idx *= num_packets;
-            packet_idx += (nidx[i]/size);
+            size = ((l/ratio > 1) ? (l/ratio) : 1);
+            lidx *= size;
+            lidx += (j1%size); // index in packet in column-major
+            num_packets = l/size;
+            lpidx = j1/size;
             }
         else
             {
-            packet_idx += tmp*(nidx[i]/size);
+            // global bitreversal
+            int p = d_pdim[i];
+            if (p/c1 > c0)
+                {
+                size = ((p/c1 <= l*c0) ? (l*c0*c1/p) : 1);
+                num_packets = l/size;
+
+                // inside packet: column major
+                lidx *= size;
+                int lidxi = bit_reverse(j1/num_packets,size);
+                lidx += lidxi;
+                lpidx = bit_reverse(j1 %num_packets,num_packets);
+                }
+            else
+                {
+                size = ((l*p/c1 >= c0) ? l*p/c1/c0 : 1);
+                num_packets = l/size;
+                int lidxi = bit_reverse(j1%size,size);
+                lidx *= size;
+                lidx += lidxi;
+                lpidx = bit_reverse(j1 / size,num_packets);
+                }
+            }
+
+        if (!row_m)
+            {
+            packet_idx *= num_packets;
+            packet_idx += lpidx;
+            }
+        else
+            {
+            packet_idx += tmp*lpidx;
             tmp *= num_packets;
             }
+
         size_tot *= size;
         }
 
@@ -281,11 +335,13 @@ __global__ void gpu_c2b_unpack_kernel_nd(unsigned int local_size,
                                     int *d_embed,
                                     int *d_length,
                                     int row_m,
+                                    int *d_pdim,
+                                    int *d_rev,
+                                    int *d_rev_partial,
                                     const cuda_cpx_t *recv_data,
                                     cuda_cpx_t *local_data
                                     )
     {
-    extern __shared__ int idx_shared[];
     // index of local component
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -321,21 +377,49 @@ __global__ void gpu_c2b_unpack_kernel_nd(unsigned int local_size,
         int num_packets;
         int lidxi; // index in packet
         int sizei;
-        if (l >= ratio)
+        int rev = d_rev[i];
+        if (!rev)
             {
-            num_packets = ratio;
-            sizei = l/ratio;
-            lidxi = j1 /ratio;
-            lpidx = (j1 % ratio);
+            if (l >= ratio)
+                {
+                num_packets = ratio;
+                sizei = l/ratio;
+                lidxi = j1 /ratio;
+                lpidx = (j1 % ratio);
+                }
+            else
+                {
+                lpidx = j1;
+                num_packets = l;
+                sizei = 1;
+                lidxi = 0;
+                }
             }
         else
             {
-            lpidx = j1;
-            num_packets = l;
-            sizei = 1;
-            lidxi = 0;
+            // global bit reversal
+            int p = d_pdim[i];
+            if (c0 < p/c1)
+                {
+                // this section is usually not called during a dfft
+                sizei = ((p/c1 <= l*c0) ? (l*c0*c1/p) : 1);
+                num_packets = l/sizei;
+                lidxi = j1 / num_packets;
+                lpidx = bit_reverse(j1 % num_packets,num_packets);
+                }
+            else
+                {
+                sizei = ((l*p/c1 >= c0) ? l*p/c1/c0 : 1);
+                num_packets = l/sizei;
+                lidxi = j1 % sizei;
+                int rev_partial = d_rev_partial[i];
+                if (rev_partial)
+                    lpidx = j1 / sizei;
+                else
+                    lpidx = bit_reverse(j1 / sizei, num_packets);
+                }
             }
-        
+
         if (!row_m)
             {
             /* packets in column major order */
@@ -365,6 +449,9 @@ void gpu_c2b_pack_nd(unsigned int local_size,
                      int *d_embed,
                      int *d_length,
                      int row_m,
+                     int *d_pdim,
+                     int *d_rev_j1,
+                     int *d_rev,
                      const cuda_cpx_t *local_data,
                      cuda_cpx_t *send_data
                      )
@@ -381,6 +468,9 @@ void gpu_c2b_pack_nd(unsigned int local_size,
                                                   d_embed,
                                                   d_length,
                                                   row_m,
+                                                  d_pdim,
+                                                  d_rev_j1,
+                                                  d_rev,
                                                   local_data,
                                                   send_data);
     }
@@ -392,6 +482,9 @@ void gpu_c2b_unpack_nd(unsigned int local_size,
                      int *d_embed,
                      int *d_length,
                      int row_m,
+                     int *d_pdim,
+                     int *d_rev,
+                     int *d_rev_partial,
                      const cuda_cpx_t *recv_data,
                      cuda_cpx_t *local_data
                      )
@@ -407,6 +500,9 @@ void gpu_c2b_unpack_nd(unsigned int local_size,
                              d_embed,
                              d_length,
                              row_m,
+                             d_pdim,
+                             d_rev,
+                             d_rev_partial,
                              recv_data,
                              local_data);
     } 
@@ -489,6 +585,53 @@ __global__ void gpu_twiddle_kernel(unsigned int local_size,
     d_out[idx] = out;
     }
 
+// apply twiddle factors (n-dimensional version)
+__global__ void gpu_twiddle_kernel_nd(unsigned int local_size,
+                                   int ndim,
+                                   int *d_embed,
+                                   int *d_length,
+                                   float *d_alpha,
+                                   cuda_cpx_t *d_in,
+                                   cuda_cpx_t *d_out,
+                                   int inv)
+    {
+    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (idx >= local_size) return;
+
+    // complex-multiply twiddle factors for all dimensions
+    int tmp = idx;
+
+    float theta = 0.0f;
+    for (int i = ndim-1; i>=0;--i)
+        {
+        int embed = d_embed[i];
+        int length = d_length[i];
+
+        int j = tmp % embed;
+        if (j >= length) return;
+        tmp /= embed;
+
+        float alpha = d_alpha[i];
+        theta -= (float)j*2.0f * float(M_PI) * alpha/(float) length;
+        }
+
+    cuda_cpx_t w;
+    CUDA_RE(w) = cosf(theta);
+    CUDA_IM(w) = sinf(theta);
+
+    cuda_cpx_t out;
+    float sign = inv ? -1.0f : 1.0f;
+
+    w.y *= sign;
+
+    cuda_cpx_t in = d_in[idx];
+    CUDA_RE(out) = CUDA_RE(in) * CUDA_RE(w) - CUDA_IM(in) * CUDA_IM(w);
+    CUDA_IM(out) = CUDA_RE(in) * CUDA_IM(w) + CUDA_IM(in) * CUDA_RE(w); 
+
+    d_out[idx] = out;        
+    }
+
 void gpu_twiddle(unsigned int local_size,
                  const unsigned int length,
                  const unsigned int stride,
@@ -510,6 +653,23 @@ void gpu_twiddle(unsigned int local_size,
                                                 inv);
 }
 
+void gpu_twiddle_nd(unsigned int local_size,
+                 int ndim,
+                 int *d_embed,
+                 int *d_length,
+                 float *d_alpha,
+                 cuda_cpx_t *d_in,
+                 cuda_cpx_t *d_out,
+                 int inv)
+    {
+    unsigned int block_size =512;
+    unsigned int n_block = local_size/block_size;
+    if (local_size % block_size ) n_block++;
+
+    gpu_twiddle_kernel_nd<<<n_block, block_size>>>(local_size, ndim, d_embed,
+        d_length, d_alpha, d_in, d_out, inv);
+    }
+ 
 __global__ void gpu_c2b_unpack_kernel(const unsigned int local_size,
                                       const unsigned int length,
                                       const unsigned int c0,

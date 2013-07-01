@@ -6,6 +6,7 @@
 
 #include <stdlib.h>
 #include <unistd.h>
+#include <assert.h>
 
 #include "dfft_common.h"
 #include "dfft_cuda.h"
@@ -23,6 +24,17 @@
         }                                                                   \
     }                                                                       \
 
+#define CHECK_LOCAL_FFT(res) \
+    {                                                                          \
+    if (res != 0)                                                              \
+        {                                                                      \
+        printf("Local FFT failed, file %s, line %d.\n",__FILE__,__LINE__); \
+        assert(!res);                                                          \
+        exit(1);                                                               \
+        }                                                                      \
+    }
+
+
 /*****************************************************************************
  * Implementation of the distributed FFT
  *****************************************************************************/
@@ -31,52 +43,27 @@
  * n-dimensional redistribute from group-cyclic with cycle c0 to cycle c1
  * 1 <=c0,c1 <= pdim[i]
  */
-void dfft_cuda_redistribute_nd(
-                  int *dim,
-                  int *pdim,
-                  int ndim,
-                  int *c0,
-                  int *c1,
-                  int* pidx,
-                  int size_in,
-                  int *embed,
-                  int *d_c0,
-                  int *d_c1,
-                  int dir,
-                  int *d_pidx,
-                  int *d_pdim,
-                  int *d_embed,
-                  int *d_length,
-                  cuda_cpx_t *d_work,
-                  cuda_cpx_t *d_scratch,
-                  cuda_cpx_t *d_scratch_2,
-                  cuda_cpx_t *h_stage_in,
-                  cuda_cpx_t *h_stage_out,
-                  int *nsend,
-                  int *nrecv,
-                  int *offset_send,
-                  int *offset_recv,
-                  MPI_Comm comm,
-                  int check_err,
-                  int row_m)
+void dfft_cuda_redistribute_nd( dfft_plan *plan, int size_in, int *embed, int *d_embed, int dir,
+                  cuda_cpx_t *d_work, int **rho_c0, int **rho_c1, int **rho_plc0c1, int **rho_pc0,
+                  int **rho_pc1, int **rho_c0c1pl)
     {
     /* exit early if nothing needs to be done */
-    int res = 1;
+    int res = 0;
     int i;
-    for (i = 0; i < ndim; ++i)
-        if (!(c0[i] == c1[i])) res = 0;
-    if (res) return;
+    for (i = 0; i < plan->ndim; ++i)
+        if (!(plan->c0[i] == plan->c1[i]) || plan->rev_global[i]) res = 1;
+    if (!res) return;
 
     int pdim_tot=1;
     int k,t;
-    for (k = 0; k < ndim; ++k)
-        pdim_tot *= pdim[k];
+    for (k = 0; k < plan->ndim; ++k)
+        pdim_tot *= plan->pdim[k];
     for (t = 0; t<pdim_tot; ++t)
         {
-        nsend[t] = 0;
-        nrecv[t] = 0;
-        offset_send[t] = 0;
-        offset_recv[t] = 0;
+        plan->nsend[t] = 0;
+        plan->nrecv[t] = 0;
+        plan->offset_send[t] = 0;
+        plan->offset_recv[t] = 0;
         }
 
     int roffs = 0;
@@ -92,139 +79,233 @@ void dfft_cuda_redistribute_nd(
         int current_dim;
         int tmp = t;
         int tmp_pidx = pdim_tot;
-        for (current_dim = 0; current_dim < ndim; ++current_dim)
+        for (current_dim = 0; current_dim < plan->ndim; ++current_dim)
             {
             /* find coordinate of remote procesor along current dimension */
-            if (!row_m)
+            if (!plan->row_m)
                 {
-                tmp_pidx /= pdim[current_dim];
+                tmp_pidx /= plan->pdim[current_dim];
                 i = tmp / tmp_pidx;
                 tmp %= tmp_pidx;
                 }
             else
                 {
-                i = (tmp % pdim[k]);
-                tmp/=pdim[current_dim];
+                i = (tmp % plan->pdim[k]);
+                tmp/=plan->pdim[current_dim];
                 }
-            int length = dim[current_dim]/pdim[current_dim];
+            int length = plan->gdim[current_dim]/plan->pdim[current_dim];
 
             /* processor index along current dimension */
-            int s = pidx[current_dim];
-            int j0_local = s % c0[current_dim];
-            int j2_local = s / c0[current_dim];
-            int j0_new_local = s % c1[current_dim];
-            int j2_new_local = s / c1[current_dim];
-            int p = pdim[current_dim];
+            int c0 = plan->c0[current_dim];
+            int c1 = plan->c1[current_dim];
+
+            int s = plan->pidx[current_dim];
+            int j0_local = s % c0;
+            int j2_local = s / c0;
+            int j0_new_local = s % c1;
+            int j2_new_local = s / c1;
+            int p = plan->pdim[current_dim];
 
             int ratio;
             /* dir == 1: block to cyclic,
                dir == 0: cyclic to block */
             if (dir)
-                ratio = c1[current_dim]/c0[current_dim];
+                ratio = c1/c0;
             else
-                ratio = c0[current_dim]/c1[current_dim];
+                ratio = c0/c1;
 
-            int size = ((length/ratio > 1) ? (length/ratio) : 1);
+            int size;
+
 
             /* initialize send offsets */
-            int j0_remote = i % c0[current_dim];
-            int j2_remote = i / c0[current_dim];
-            int j0_new_remote = i % c1[current_dim];
-            int j2_new_remote = i / c1[current_dim];
+            int j0_remote = i % c0;
+            int j2_remote = i / c0;
+            int j0_new_remote = i % c1;
+            int j2_new_remote = i / c1;
 
             if (dir)
                 {
-                send &= ((j0_local == (j0_new_remote % c0[current_dim]))
+                send &= ((j0_local == (j0_new_remote % c0))
                     && (j2_new_remote == j2_local / ratio));
-                recv &= ((j0_remote == (j0_new_local % c0[current_dim]))
+                recv &= ((j0_remote == (j0_new_local % c0))
                     && (j2_new_local == j2_remote / ratio));
                 }
             else
                 {
-                send &= (((j0_local % c1[current_dim]) == j0_new_remote)
-                    && (j2_local == (j2_new_remote/ratio)));
-                recv &= (((j0_remote % c1[current_dim]) == j0_new_local)
-                    && (j2_remote == (j2_new_local/ratio)));
-                }
-            if (ratio >= length)
+                /* assume dir == 0 */
+                if (!plan->rev_global[current_dim])
+                    {
+                    send &= (((j0_local % c1) == j0_new_remote)
+                        && (j2_local == (j2_new_remote/ratio)));
+                    recv &= (((j0_remote % c1) == j0_new_local)
+                        && (j2_remote == (j2_new_local/ratio)));
+                    }
+                else
+                    {
+                    /* global bitreversed output */
+                    if (p/c1 > c0)
+                        {
+                        /* this section is usually not called during a DFFT */
+                        k = c0*c1/plan->pdim[i];
+                        send &= ((j0_local == rho_c0[current_dim][j2_new_remote/k]) &&
+                            (rho_c1[current_dim][j0_new_remote] == j2_local/k));
+                        recv &= ((j0_remote == rho_c0[current_dim][j2_new_local/k]) &&
+                            (rho_c1[current_dim][j0_new_local] == j2_remote/k));
+
+                        if (p/c1 > length*c0)
+                            {
+                            k = p/(length*c0*c1);
+                            send &= (rho_plc0c1[current_dim][j2_new_remote%k]
+                                == (j2_local % k));
+                            recv &= (rho_plc0c1[current_dim][j2_new_local%k]
+                                == (j2_remote % k));
+                            }
+                        }
+                    else
+                        {
+                        k = c0*c1/p;
+                        if (p/c1 > 1)
+                            {
+                            send &= (((rho_pc1[current_dim][j2_new_remote] == j0_local%(p/c1))
+                                &&(rho_pc0[current_dim][j0_new_remote % (p/c0)] == j2_local)));
+                            recv &= (((rho_pc1[current_dim][j2_new_local] == j0_remote%(p/c1))
+                                && (rho_pc0[current_dim][j0_new_local % (p/c0)] == j2_remote)));
+                            }
+                        else
+                            {
+                            send &= (((j2_new_remote == j0_local%(p/c1))
+                                &&(rho_pc0[current_dim][j0_new_remote % (p/c0)] == j2_local)));
+                            recv &= (((j2_new_local == j0_remote%(p/c1))
+                                && (rho_pc0[current_dim][j0_new_local % (p/c0)] == j2_remote)));
+                            }
+
+                        if (p*length/c1 < c0)
+                            {
+                            /* this section is usually not called during a DFFT */
+                            k = c0*c1/p/length;
+                            send &= (rho_c0c1pl[current_dim][j0_new_remote/(c1/k)] ==
+                                j0_local/(c0/k));
+                            recv &= (rho_c0c1pl[current_dim][j0_new_local/(c1/k)] ==
+                                j0_remote/(c0/k));
+                            }
+                        }
+                    } /* rev_global */
+                } /* dir */
+            if (!plan->rev_global[current_dim] && (ratio >= length))
                 {
                 if (dir)
                     {
-                    send &= ((j0_new_remote / (length*c0[current_dim]))
+                    send &= ((j0_new_remote / (length*c0))
                         == (j2_local % (ratio/length)));
-                    recv &= ((j0_new_local / (length*c0[current_dim]))
+                    recv &= ((j0_new_local / (length*c0))
                         == (j2_remote % (ratio/length)));
                     }
                 else
                     {
-                    send &= ((j0_local / (length*c1[current_dim]))
+                    send &= ((j0_local / (length*c1))
                         == (j2_new_remote % (ratio/length)));
-                    recv &= ((j0_remote / (length*c1[current_dim]))
+                    recv &= ((j0_remote / (length*c1))
                         == (j2_new_local % (ratio/length)));
                     }
                 } 
 
             /* determine packet length for current dimension */
-            if (ratio >= length)
-                size = 1;
+            if (! plan->rev_global[current_dim])
+                {
+                if (ratio >= length)
+                    size = 1;
+                else
+                    size = length/ratio;
+                }
             else
-                size = length/ratio;
-
+                {
+                if (p/c1 >= c0)
+                    {
+                    // usually not entered
+                    size = ((p/c1 <= length*c0) ? (length*c0*c1/p) : 1);
+                    }
+                else
+                    {
+                    size = ((length*p/c1 >= c0) ? (length*p/c1/c0) : 1);
+                    }
+                }
             recv_size *= (recv ? size : 0);
             send_size *= (send ? size : 0);
             } /* end loop over dimensions */
 
-        nsend[t] = send_size*sizeof(cuda_cpx_t);
-        nrecv[t] = recv_size*sizeof(cuda_cpx_t);
-        offset_send[t] = soffs*sizeof(cuda_cpx_t);
-        offset_recv[t] = roffs*sizeof(cuda_cpx_t);
+        plan->nsend[t] = send_size*sizeof(cuda_cpx_t);
+        plan->nrecv[t] = recv_size*sizeof(cuda_cpx_t);
+        plan->offset_send[t] = soffs*sizeof(cuda_cpx_t);
+        plan->offset_recv[t] = roffs*sizeof(cuda_cpx_t);
         roffs += recv_size;
         soffs += send_size;
         } /* end loop over processors */
 
     /* pass arguments to CUDA */
-    cudaMemcpy(d_c0, c0, sizeof(int)*ndim,cudaMemcpyDefault);
-    cudaMemcpy(d_c1, c1, sizeof(int)*ndim,cudaMemcpyDefault);
+    cudaMemcpy(plan->d_c0, plan->c0, sizeof(int)*plan->ndim,cudaMemcpyDefault);
+    if (plan->check_cuda_errors) CHECK_CUDA();
+    cudaMemcpy(plan->d_c1, plan->c1, sizeof(int)*plan->ndim,cudaMemcpyDefault);
+    if (plan->check_cuda_errors) CHECK_CUDA();
 
     /* pack data */
     if (dir)
-        gpu_b2c_pack_nd(size_in, d_c0, d_c1, ndim, d_embed,
-            d_length, row_m, d_work, d_scratch);
+        {
+        gpu_b2c_pack_nd(size_in, plan->d_c0, plan->d_c1, plan->ndim, d_embed,
+            plan->d_length, plan->row_m, d_work, plan->d_scratch);
+        if (plan->check_cuda_errors) CHECK_CUDA();
+        }
     else
-        gpu_c2b_pack_nd(size_in, d_c0, d_c1, ndim, d_embed,
-            d_length, row_m, d_work, d_scratch);
-    if (check_err) CHECK_CUDA();
+        {
+        cudaMemcpy(plan->d_rev_j1, plan->rev_j1, sizeof(int)*plan->ndim,cudaMemcpyDefault);
+        if (plan->check_cuda_errors) CHECK_CUDA();
+        cudaMemcpy(plan->d_rev_global, plan->rev_global, sizeof(int)*plan->ndim,cudaMemcpyDefault);
+        if (plan->check_cuda_errors) CHECK_CUDA();
+
+        gpu_c2b_pack_nd(size_in, plan->d_c0, plan->d_c1, plan->ndim, d_embed,
+            plan->d_length, plan->row_m, plan->d_pdim, plan->d_rev_j1, plan->d_rev_global,
+            d_work, plan->d_scratch);
+        if (plan->check_cuda_errors) CHECK_CUDA();
+        }
 
     /* synchronize */
-    MPI_Barrier(comm);
+    MPI_Barrier(plan->comm);
 
     /* communicate */
     #ifdef ENABLE_MPI_CUDA
-    MPI_Alltoallv(d_scratch,nsend, offset_send, MPI_BYTE,
-                  d_scratch_2, nrecv, offset_recv, MPI_BYTE,
-                  comm);
+    MPI_Alltoallv(plan->d_scratch,plan->nsend, plan->offset_send, MPI_BYTE,
+                  plan->d_scratch_2, plan->nrecv, plan->offset_recv, MPI_BYTE,
+                  p->comm);
     #else
     // stage into host buf
-    cudaMemcpy(h_stage_in, d_scratch, sizeof(cuda_cpx_t)*npackets*size,cudaMemcpyDefault); 
-    if (check_err) CHECK_CUDA();
+    cudaMemcpy(plan->h_stage_in, plan->d_scratch, sizeof(cuda_cpx_t)*size_in,cudaMemcpyDefault); 
+    if (plan->check_cuda_errors) CHECK_CUDA();
 
-    MPI_Alltoallv(h_stage_in,nsend, offset_send, MPI_BYTE,
-                  h_stage_out,nrecv, offset_recv, MPI_BYTE,
-                  comm);
+    MPI_Alltoallv(plan->h_stage_in,plan->nsend, plan->offset_send, MPI_BYTE,
+                  plan->h_stage_out,plan->nrecv, plan->offset_recv, MPI_BYTE,
+                  plan->comm);
 
     // copy back received data
-    cudaMemcpy(d_scratch_2,h_stage_out, sizeof(cuda_cpx_t)*size_in,cudaMemcpyDefault); 
-    if (check_err) CHECK_CUDA();
+    cudaMemcpy(plan->d_scratch_2,plan->h_stage_out, sizeof(cuda_cpx_t)*size_in,cudaMemcpyDefault); 
+    if (plan->check_cuda_errors) CHECK_CUDA();
     #endif
 
     /* unpack data */
     if (dir)
-        gpu_b2c_unpack_nd(size_in, d_c0, d_c1, ndim, d_embed, d_length,
-            row_m, d_scratch_2, d_work);
+        {
+        gpu_b2c_unpack_nd(size_in, plan->d_c0, plan->d_c1, plan->ndim, d_embed,
+            plan->d_length, plan->row_m, plan->d_scratch_2, d_work);
+        if (plan->check_cuda_errors) CHECK_CUDA();
+        }
     else
-        gpu_c2b_unpack_nd(size_in, d_c0, d_c1, ndim, d_embed, d_length,
-            row_m, d_scratch_2, d_work);
-    if (check_err) CHECK_CUDA();
+        {
+        cudaMemcpy(plan->d_rev_partial, plan->rev_partial, sizeof(int)*plan->ndim,cudaMemcpyDefault);
+        if (plan->check_cuda_errors) CHECK_CUDA();
+
+        gpu_c2b_unpack_nd(size_in, plan->d_c0, plan->d_c1, plan->ndim, d_embed,
+            plan->d_length, plan->row_m, plan->d_pdim, plan->d_rev_global,
+            plan->d_rev_partial, plan->d_scratch_2, d_work);
+        if (plan->check_cuda_errors) CHECK_CUDA();
+        }
     }
 
 
@@ -669,7 +750,7 @@ void cuda_mpifft1d_dif(int *dim,
     for (c = p; c >1; c /= length)
         {
         /* do local out-of-place place FFT (long-distance butterflies) */
-        dfft_cuda_local_1dfft(d_in, d_out, plan_long, inverse);
+        dfft_cuda_local_fft(d_in, d_out, plan_long, inverse);
 
         /* apply twiddle factors */
         double alpha = ((double)(pidx[current_dim] %c))/(double)c;
@@ -688,11 +769,11 @@ void cuda_mpifft1d_dif(int *dim,
 
     /* perform remaining short-distance butterflies,
      * out-of-place 1d FFT */
-    dfft_cuda_local_1dfft(d_in, d_out, plan_short,inverse);
+    dfft_cuda_local_fft(d_in, d_out, plan_short,inverse);
     } 
 
 /*
- * n-dimensional fft routine (in-place)
+ * n-dimensional fft routine, based on 1-d transforms (in-place)
  */
 void cuda_mpifftnd_dif(int *dim,
             int *pdim,
@@ -745,127 +826,235 @@ void cuda_mpifftnd_dif(int *dim,
         }
     }
 
-void dfft_cuda_redistribute(int *dim,
-            int *pdim,
-            int ndim,
-            int* pidx,
-            int size,
-            int *embed,
-            int *c0,
-            int *c1,
-            int *d_c0,
-            int *d_c1,
-            int *d_pidx,
-            int *d_pdim,
-            int *d_embed,
-            int *d_length,
-            cuda_cpx_t *d_work,
-            cuda_cpx_t *d_scratch,
-            cuda_cpx_t *d_scratch_2,
-            cuda_cpx_t *h_stage_in,
-            cuda_cpx_t *h_stage_out,
-            int *nsend,
-            int *nrecv,
-            int *offset_send,
-            int *offset_recv,
-            int c2b,
-            MPI_Comm comm,
-            int check_err,int row_m)
+/* n-dimensional FFT using local multidimensional FFTs 
+ * and n-dimensional redistributions
+ */
+void cuda_fftnd_multi(dfft_plan *p,
+                      cuda_cpx_t *d_in,
+                      cuda_cpx_t *d_out,
+                      cuda_plan_t **cuda_plans_multi,
+                      cuda_plan_t *cuda_plans_final,
+                      int inv)
     {
-    cuda_cpx_t *cur_work =d_work;
-    cuda_cpx_t *cur_scratch =d_scratch;
-    int i;
+    int d,i,j;
+    /* initialize current stage */
+    for (i = 0; i < p->ndim; ++i)
+        p->c0[i] = p->pdim[i];
 
-    if (!c2b)
+    int rev_global, rev_local;
+    int res;
+    for (d = p->max_depth-1; d>=0; d--)
         {
-        for (i = 0; i < ndim; ++i)
+        cuda_cpx_t *cur_in = d_in;
+        cuda_cpx_t *cur_out = p->d_scratch;
+        for (j =0; j < p->n_fft[d]; ++j)
             {
-            /* block to cyclic */
-            c0[i] = 1;
-            c1[i] = pdim[i];
+            if (p->depth[j] > d)
+                {
+                /* do local FFT */
+                res = dfft_cuda_local_fft(cur_in, cur_out, cuda_plans_multi[d][j], inv);
+                CHECK_LOCAL_FFT(res);
+                if (p->check_cuda_errors) CHECK_CUDA();
+                }
+            else
+                {
+                /* transpose only */
+                int l = p->gdim[j]/p->pdim[j];
+                int stride = p->size_in/p->inembed[j];
+
+                gpu_transpose(p->size_in,l,stride, p->inembed[j],cur_in,cur_out);
+                if (p->check_cuda_errors) CHECK_CUDA();
+                }
+
+            /* swap pointers */
+            cuda_cpx_t *tmp;
+            tmp = cur_in;
+            cur_in = cur_out;
+            cur_out = tmp;
+            }
+
+        /* twiddle factor */
+        for (i =0; i < p->ndim; ++i)
+            {
+            if (p->depth[i] > d)
+                p->h_alpha[i] = ((double)(p->pidx[i] % p->c0[i]))/(double)p->c0[i];
+            else
+                p->h_alpha[i] = 0.0;
+            }
+
+        /* twiddle */
+        cudaMemcpy(p->d_alpha, p->h_alpha, sizeof(int)*p->ndim,cudaMemcpyDefault);
+        if (p->check_cuda_errors) CHECK_CUDA();
+
+        gpu_twiddle_nd(p->size_in, p->ndim, p->d_iembed, p->d_length,
+            p->d_alpha, cur_in, d_in, inv);
+        if (p->check_cuda_errors) CHECK_CUDA();
+
+        /* update cycle */
+        for (i = 0; i< p->ndim; ++i)
+            {
+            int length = p->gdim[i] / p->pdim[i];
+            /* only update if necessary */
+            if (p->depth[i] > d)
+                {
+                if (d >0)
+                    {
+                    /* decimate in steps of 'length' */
+                    p->c1[i] = p->c0[i]/length; 
+
+                    /* the previous FFT produced bit-reversed output compared 
+                     * to an unordered FFT */
+                    p->rev_j1[i] = 1;
+                    p->rev_global[i] = 0;
+                    p->rev_partial[i] = 0;
+                    }
+                else
+                    {
+                    /* in the last stage, we go back to cyclic, after a bit reversal */
+                    p->rev_j1[i] = 1;
+                    p->rev_global[i] = 1;
+                    p->rev_partial[i] = 1;
+                    p->c1[i] = p->pdim[i]; 
+                    }
+                }
+            else
+                {
+                p->rev_global[i] = 0;
+                p->rev_partial[i] = 0;
+                p->rev_j1[i] = 0;
+                }
+            }
+
+        /* redistribute */
+        dfft_cuda_redistribute_nd(p, p->size_in, p->inembed, p->d_iembed,
+                  0, d_in, NULL, NULL, NULL, p->rho_pk0, NULL, NULL);
+ 
+        /* old cycle == new cycle */
+        for (i = 0; i < p->ndim; ++i)
+            p->c0[i] = p->c1[i];
+        }
+
+    /* final stage */
+    if (!p->final_multi)
+        {
+        int size = p->size_in;
+        for (i = 0; i < p->ndim; ++i)
+            {
+            /* do 1d FFT */
+            cuda_cpx_t *d_in_ptr = ((i == 0) ? d_in : p->d_scratch);
+            res = dfft_cuda_local_fft(d_in_ptr, p->d_scratch_2, cuda_plans_final[i] , inv);
+            CHECK_LOCAL_FFT(res);
+            if (p->check_cuda_errors) CHECK_CUDA();
+
+            /* transpose */
+            int l = p->gdim[i]/p->pdim[i];
+            int stride = size/p->inembed[i];
+
+            /* transpose local matrix */
+            cuda_cpx_t *d_out_ptr = ((i == p->ndim-1) ? d_out : p->d_scratch);
+            gpu_transpose(size,l,stride, p->oembed[i],p->d_scratch_2, d_out_ptr);
+            if (p->check_cuda_errors) CHECK_CUDA();
+
+            /* update size */
+            size *= p->oembed[i];
+            size /= p->inembed[i];
             }
         }
     else
         {
-        for (i = 0; i < ndim; ++i)
+        /* do multidimensional fft */
+        int res;
+        res = dfft_cuda_local_fft(d_in, d_out, cuda_plans_final[0] , inv);
+        CHECK_LOCAL_FFT(res);
+        if (p->check_cuda_errors) CHECK_CUDA();
+        }
+    }
+
+void dfft_cuda_redistribute(dfft_plan *plan, int size, int *embed, int *d_embed,
+            cuda_cpx_t *d_work, int c2b)
+    {
+    int i;
+
+    for (i = 0; i < plan->ndim; ++i)
+        {
+        /* no bit reversal */
+        plan->rev_global[i] = 0;
+        plan->rev_partial[i] = 0;
+        plan->rev_j1[i] = 0;
+        }
+
+    if (!c2b)
+        {
+        for (i = 0; i < plan->ndim; ++i)
+            {
+            /* block to cyclic */
+            plan->c0[i] = 1;
+            plan->c1[i] = plan->pdim[i];
+            }
+        }
+    else
+        {
+        for (i = 0; i < plan->ndim; ++i)
             {
             /* cyclic to block */
-            c0[i] = pdim[i];
-            c1[i] = 1;
+            plan->c0[i] = plan->pdim[i];
+            plan->c1[i] = 1;
             }
         }
 
     int dir = (c2b ? 0 : 1 );
-    dfft_cuda_redistribute_nd(dim,pdim,ndim, c0,
-          c1, pidx, size, embed, d_c0, d_c1, dir, d_pidx,
-          d_pdim, d_embed, d_length, d_work, d_scratch,
-          d_scratch_2, h_stage_in, h_stage_out, nsend,
-          nrecv, offset_send, offset_recv, comm,
-          check_err, row_m);
+    dfft_cuda_redistribute_nd(plan, size, embed, d_embed, dir,
+          d_work,  NULL, NULL, NULL, NULL, NULL, NULL);
+ 
     }
 
 
 /*****************************************************************************
  * Distributed FFT interface
  *****************************************************************************/
-int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan p)
+int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan *p)
     {
     int out_of_place = (d_in == d_out) ? 0 : 1;
 
-    int check_err = p.check_cuda_errors;
-    cuda_cpx_t *d_scratch, *d_work;
+    int check_err = p->check_cuda_errors;
+    cuda_cpx_t *d_work;
 
     if (out_of_place)
         {
-        d_work = p.d_scratch;
-        d_scratch = p.d_scratch_2; 
-        int size = p.size_in - p.delta_in;
+        d_work = p->d_scratch_3;
+        int size = p->size_in - p->delta_in;
         cudaMemcpy(d_work, d_in, size*sizeof(cuda_cpx_t),cudaMemcpyDefault);
         if (check_err) CHECK_CUDA();
         }
     else
         {
-        d_scratch = p.d_scratch;
-        /*! FIXME need to ensure in buf size >= scratch_size */
         d_work = d_in;
         }
 
-    if ((!dir && !p.input_cyclic) || (dir && !p.output_cyclic))
+    if ((!dir && !p->input_cyclic) || (dir && !p->output_cyclic))
         {
         /* redistribution of input */
-        dfft_cuda_redistribute(p.gdim, p.pdim, p.ndim, p.pidx,
-            p.size_in, p.inembed, p.c0, p.c1, p.d_c0, p.d_c1,
-            p.d_pidx, p.d_pdim, p.d_iembed, p.d_length,
-            d_work, d_scratch, p.d_scratch_3, p.h_stage_in,
-            p.h_stage_out, p.nsend,p.nrecv, p.offset_send,
-            p.offset_recv, 0, p.comm,check_err,p.row_m); 
+        dfft_cuda_redistribute(p,p->size_in, p->inembed, p->d_iembed, d_work, 0); 
         }
 
     /* multi-dimensional FFT */
-    cuda_mpifftnd_dif(p.gdim, p.pdim, p.ndim, p.pidx, dir,
+    /*cuda_mpifftnd_dif(p.gdim, p.pdim, p.ndim, p.pidx, dir,
         p.size_in,p.inembed,p.oembed, d_work, d_scratch,
         p.h_stage_in, p.h_stage_out,
         dir ? p.cuda_plans_short_inverse : p.cuda_plans_short_forward,
         dir ? p.cuda_plans_long_inverse : p.cuda_plans_long_forward,
         p.rho_L, p.rho_pk0, p.rho_Lk0, p.nsend,p.nrecv,
-        p.offset_send,p.offset_recv, p.comm,check_err,p.row_m);
+        p.offset_send,p.offset_recv, p.comm,check_err,p.row_m); */
+    
+    cuda_fftnd_multi(p, d_work, d_out,
+                     dir ? p->cuda_plans_multi_bw : p->cuda_plans_multi_fw,
+                     dir ? p->cuda_plans_final_bw : p->cuda_plans_final_fw,
+                     dir);
 
-    if ((dir && !p.input_cyclic) || (!dir && !p.output_cyclic))
+    if ((dir && !p->input_cyclic) || (!dir && !p->output_cyclic))
         {
         /* redistribution of output */
-        dfft_cuda_redistribute(p.gdim, p.pdim, p.ndim, p.pidx,
-            p.size_out, p.oembed, p.c0, p.c1, p.d_c0, p.d_c1,
-            p.d_pidx, p.d_pdim, p.d_oembed, p.d_length,
-            d_work, d_scratch, p.d_scratch_3, p.h_stage_in,
-            p.h_stage_out, p.nsend,p.nrecv, p.offset_send,
-            p.offset_recv, 1, p.comm,check_err,p.row_m); 
-        }
-
-    if (out_of_place)
-        {
-        int size = p.size_out - p.delta_out;
-        cudaMemcpy(d_out, d_work, sizeof(cuda_cpx_t)*size,cudaMemcpyDefault);
-        if (check_err) CHECK_CUDA();
+        dfft_cuda_redistribute(p,p->size_out, p->oembed, p->d_oembed, d_out, 1); 
         }
 
     return 0;
@@ -913,6 +1102,16 @@ int dfft_cuda_create_plan(dfft_plan *p,
     CHECK_CUDA();
     cudaMalloc((void **)&(p->d_length), sizeof(int)*ndim);
     CHECK_CUDA();
+    cudaMalloc((void **)&(p->d_alpha), sizeof(int)*ndim);
+    CHECK_CUDA();
+    cudaMalloc((void **)&(p->d_rev_j1), sizeof(int)*ndim);
+    CHECK_CUDA();
+    cudaMalloc((void **)&(p->d_rev_partial), sizeof(int)*ndim);
+    CHECK_CUDA();
+    cudaMalloc((void **)&(p->d_rev_global), sizeof(int)*ndim);
+    CHECK_CUDA();
+
+    p->h_alpha = (cuda_scalar_t *) malloc(sizeof(cuda_scalar_t)*ndim);
 
     /* initialize cuda buffers */
     int *h_length = (int *)malloc(sizeof(int)*ndim);
@@ -937,6 +1136,7 @@ int dfft_cuda_create_plan(dfft_plan *p,
 void dfft_cuda_destroy_plan(dfft_plan plan)
     {
     dfft_destroy_plan_common(plan, 1);
+
     #ifndef ENABLE_MPI_CUDA
     cudaHostUnregister(plan.h_stage_in);
     cudaHostUnregister(plan.h_stage_out);
@@ -951,6 +1151,11 @@ void dfft_cuda_destroy_plan(dfft_plan plan)
     cudaFree(plan.d_iembed);
     cudaFree(plan.d_oembed);
     cudaFree(plan.d_length);
+    cudaFree(plan.d_alpha);
+    cudaFree(plan.d_rev_j1);
+    cudaFree(plan.d_rev_partial);
+    cudaFree(plan.d_rev_global);
+    free(plan.h_alpha);
     }
 
 void dfft_cuda_check_errors(dfft_plan *plan, int check_err)

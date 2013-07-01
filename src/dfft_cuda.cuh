@@ -23,6 +23,15 @@ EXTERN_DFFT void gpu_twiddle(unsigned int np,
                  cuda_cpx_t *d_out,
                  int inv);
  
+EXTERN_DFFT void gpu_twiddle_nd(unsigned int local_size,
+                 int ndim,
+                 int *d_embed,
+                 int *d_length,
+                 float *d_alpha,
+                 cuda_cpx_t *d_in,
+                 cuda_cpx_t *d_out,
+                 int inv);
+
 EXTERN_DFFT void gpu_c2b_unpack(const unsigned int local_size,
                     const unsigned int length,
                     const unsigned int c0,
@@ -63,6 +72,9 @@ EXTERN_DFFT void gpu_c2b_pack_nd(unsigned int local_size,
                      int *d_embed,
                      int *d_length,
                      int row_m,
+                     int *d_pdim,
+                     int *d_rev_j1,
+                     int *d_rev,
                      const cuda_cpx_t *local_data,
                      cuda_cpx_t *send_data
                      );
@@ -74,6 +86,9 @@ EXTERN_DFFT void gpu_c2b_unpack_nd(unsigned int local_size,
                      int *d_embed,
                      int *d_length,
                      int row_m,
+                     int *d_pdim,
+                     int *d_rev,
+                     int *d_rev_partial,
                      const cuda_cpx_t *recv_data,
                      cuda_cpx_t *local_data
                      );
