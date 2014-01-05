@@ -7,7 +7,7 @@
 #include "bare_fft.h"
 #include <stdlib.h>
 
-typedef cpxdbl cpx_t;
+typedef cpxfloat cpx_t;
 typedef bare_fft_plan plan_t;
 
 #define RE(X) X.x

@@ -362,11 +362,6 @@ int dfft_create_plan_common(dfft_plan *p,
             p->oembed[i] = p->gdim[i]/p->pdim[i];
         }
 
-    /* since we expect column-major input, the leading dimension 
-      has no embedding */
-    p->inembed[0] = gdim[0]/pdim[0];
-    p->oembed[0] = gdim[0]/pdim[0];
-
     p->offset_send = (int *)malloc(sizeof(int)*nump);
     p->offset_recv = (int *)malloc(sizeof(int)*nump);
     p->nsend = (int *)malloc(sizeof(int)*nump);
@@ -399,6 +394,11 @@ int dfft_create_plan_common(dfft_plan *p,
     int size_in = 1;
     int size_out = 1;
 
+    /* since we expect column-major input, the leading dimension 
+      has no embedding */
+    p->inembed[0] = gdim[0]/pdim[0];
+    p->oembed[0] = gdim[0]/pdim[0];
+
     for (i = 0; i < ndim ; ++i)
         {
         size_in *= p->inembed[i];
@@ -407,18 +407,6 @@ int dfft_create_plan_common(dfft_plan *p,
 
     p->size_in = size_in;
     p->size_out = size_out;
-
-    int delta_in = 0;
-    int delta_out = 0;
-    for (i = 0; i < ndim; ++i)
-        {
-        delta_in *= p->inembed[i];
-        delta_in += (p->inembed[i]- gdim[i]/pdim[i]);
-        delta_out *= p->oembed[i];
-        delta_out += (p->oembed[i]- gdim[i]/pdim[i]);
-        }
-    p->delta_in = delta_in;
-    p->delta_out = delta_out;
 
     /* find length k0 of last stage of butterflies */
     p->k0 = malloc(sizeof(int)*ndim);

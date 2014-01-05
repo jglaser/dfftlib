@@ -66,8 +66,6 @@ typedef struct
     int np;               /* size of problem (number of elements per proc) */
     int size_in;          /* size including embedding */
     int size_out;         /* size including embedding */
-    int delta_in;         /* difference of array size to product of embedding dimensions */
-    int delta_out;        /* difference of array size to product of embedding dimensions */
     int *k0;              /* Last stage of butterflies (per dimension */
     
     int input_cyclic;     /* ==1 if input for the forward transform is cyclic */

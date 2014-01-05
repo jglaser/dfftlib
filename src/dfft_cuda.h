@@ -40,7 +40,7 @@ EXTERN_DFFT void dfft_cuda_check_errors(dfft_plan *plan, int check_err);
 /*
  * Execute the parallel FFT on the device
  */
-EXTERN_DFFT int dfft_cuda_execute(cuda_cpx_t *in, cuda_cpx_t *out, int dir, dfft_plan *p);
+EXTERN_DFFT int dfft_cuda_execute(cuda_cpx_t *id_in, cuda_cpx_t *d_out, int dir, dfft_plan *p);
 
 #undef EXTERN_DFFT
 #endif

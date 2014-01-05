@@ -1,5 +1,5 @@
 /* A simple radix-2 FFT */
-typedef struct { double x,y;} cpxdbl;
+typedef struct { float x,y;} cpxfloat;
 
 typedef struct
     {
@@ -11,4 +11,4 @@ typedef struct
     int howmany;
     } bare_fft_plan;
 
-void radix2_fft(cpxdbl *in, cpxdbl *out, const int n, const int isign, bare_fft_plan plan);
+void radix2_fft(cpxfloat *in, cpxfloat *out, const int n, const int isign, bare_fft_plan plan);

@@ -1065,8 +1065,7 @@ int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan *p
         if (out_of_place)
             {
             d_work = p->d_scratch_3;
-            int size = p->size_in - p->delta_in;
-            cudaMemcpy(d_work, d_in, size*sizeof(cuda_cpx_t),cudaMemcpyDefault);
+            cudaMemcpy(d_work, d_in, p->size_in*sizeof(cuda_cpx_t),cudaMemcpyDefault);
             if (check_err) CHECK_CUDA();
             }
         else

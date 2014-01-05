@@ -614,27 +614,26 @@ void redistribute_nd(int *dim,
 /*****************************************************************************
  * Distributed FFT interface
  *****************************************************************************/
-int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
+int dfft_execute(cpx_t *h_in, cpx_t *h_out, int dir, dfft_plan p)
     {
     /* only works on host plans */
     if (p.device) return 2;
 
-    int out_of_place = (in == out) ? 0 : 1;
+    int out_of_place = (h_in == h_out) ? 0 : 1;
 
     cpx_t *scratch, *work;
 
     if (out_of_place)
         {
         work = p.scratch;
-        scratch = p.scratch_2; 
-        int size = p.size_in - p.delta_in;
-        memcpy(work, in, size*sizeof(cpx_t));
+        scratch = p.scratch_2;
+        memcpy(work, h_in, p.size_in*sizeof(cpx_t));
         }
     else
         {
         scratch = p.scratch;
         /*! FIXME need to ensure in buf size >= scratch_size */
-        work = in;
+        work = h_in;
         }
 
     if ((!dir && !p.input_cyclic) || (dir && !p.output_cyclic))
@@ -663,8 +662,7 @@ int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p)
 
     if (out_of_place)
         {
-        int size = p.size_out - p.delta_out;
-        memcpy(out, work, sizeof(cpx_t)*size);
+        memcpy(h_out, work, sizeof(cpx_t)*p.size_out);
         }
 
     return 0;

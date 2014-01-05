@@ -7,9 +7,9 @@
  */
 
 /* out-of-place transform */
-void four1(cpxdbl *in, cpxdbl *out, const int n, const int isign, const int istride, const int ostride) {
+void four1(cpxfloat *in, cpxfloat *out, const int n, const int isign, const int istride, const int ostride) {
 	int nn,mmax,m,j,istep,i;
-	double wtemp,wr,wpr,wpi,wi,theta,tempr,tempi;
+	float wtemp,wr,wpr,wpi,wi,theta,tempr,tempi;
 
     /* memcpy, using an out-of-place bit reversal would be more efficient */
     for (i = 0; i < n; ++i)
@@ -22,7 +22,7 @@ void four1(cpxdbl *in, cpxdbl *out, const int n, const int isign, const int istr
         {
         if (j > i)
             {
-            cpxdbl tmp = out[(i/2)*ostride];
+            cpxfloat tmp = out[(i/2)*ostride];
             out[(i/2)*ostride] = out[(j/2)*ostride];
             out[(j/2)*ostride] = tmp;
             }
@@ -38,7 +38,7 @@ void four1(cpxdbl *in, cpxdbl *out, const int n, const int isign, const int istr
     /* Radix-2 butterflies */
     mmax=2;
 
-    double *data = (double *)out;
+    float *data = (float *)out;
     int stride = 2*ostride;
     while (nn > mmax) {
         istep=mmax << 1;
@@ -69,7 +69,7 @@ void four1(cpxdbl *in, cpxdbl *out, const int n, const int isign, const int istr
         }
     }
 
-void radix2_fft(cpxdbl *in, cpxdbl *out, const int n, const int isign, bare_fft_plan plan)
+void radix2_fft(cpxfloat *in, cpxfloat *out, const int n, const int isign, bare_fft_plan plan)
     {
     int i;
     for (i = 0; i < plan.howmany; ++i)

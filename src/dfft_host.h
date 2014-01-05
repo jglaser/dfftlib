@@ -34,7 +34,7 @@ EXTERN_DFFT void dfft_destroy_plan(dfft_plan plan);
 /*
  * Execute the parallel FFT
  */
-EXTERN_DFFT int dfft_execute(cpx_t *in, cpx_t *out, int dir, dfft_plan p);
+EXTERN_DFFT int dfft_execute(cpx_t *h_in, cpx_t *h_out, int dir, dfft_plan p);
 
 #undef EXTERN_DFFT
 
