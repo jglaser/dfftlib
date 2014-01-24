@@ -24,7 +24,8 @@ EXTERN_DFFT int dfft_create_plan(dfft_plan *p,
     int ndim, int *gdim, int *inembed, int *oembed,
     int *pdim, int *pidx, int row_m,
     int input_cyclic, int output_cyclic,
-    MPI_Comm comm);
+    MPI_Comm comm,
+    int *proc_map);
 
 /*
  * Destroy a plan

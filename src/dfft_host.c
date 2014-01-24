@@ -30,6 +30,7 @@ void dfft_redistribute_block_to_cyclic_1d(
                   int *dfft_offset_send,
                   int *dfft_offset_recv,
                   MPI_Comm comm,
+                  int *proc_map,
                   int row_m)
     {
     /* exit early if nothing needs to be done */
@@ -94,8 +95,10 @@ void dfft_redistribute_block_to_cyclic_1d(
                 destproc += ((current_dim == k) ? desti : pidx[k]);
                 }
             }
-        dfft_nsend[destproc] = size*sizeof(cpx_t);
-        dfft_offset_send[destproc] = offset*sizeof(cpx_t);
+
+        int rank = proc_map[destproc];
+        dfft_nsend[rank] = size*sizeof(cpx_t);
+        dfft_offset_send[rank] = offset*sizeof(cpx_t);
         int r;
         for(r=0; r< (size/stride); r++)
             for (k=0; k < stride; k++)
@@ -132,9 +135,11 @@ void dfft_redistribute_block_to_cyclic_1d(
                 srcproc += ((current_dim == k) ? srci : pidx[k]);
                 }
             }
- 
-        dfft_nrecv[srcproc] = size*sizeof(cpx_t);
-        dfft_offset_recv[srcproc] = offset*sizeof(cpx_t);
+
+        int rank = proc_map[srcproc];
+
+        dfft_nrecv[rank] = size*sizeof(cpx_t);
+        dfft_offset_recv[rank] = offset*sizeof(cpx_t);
         }
 
     /* synchronize */
@@ -172,6 +177,7 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
                      int *dfft_offset_send,
                      int *dfft_offset_recv,
                      MPI_Comm comm,
+                     int *proc_map,
                      int row_m)
     {
     if (c1 == c0) return;
@@ -180,7 +186,7 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
     int length = dim[current_dim]/pdim[current_dim];
     int size = length*c1/c0;
     size = (size ? size : 1);
-    int npackets = length/size; 
+    int npackets = length/size;
 
     int stride = size_in/embed[current_dim];
 
@@ -219,7 +225,7 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
 
         int j0_new_remote = i % c1;
         int j2_new_remote = i/c1;
-    
+
         /* decision to send and/or receive */
         int send = 0;
         int recv = 0;
@@ -264,7 +270,7 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
             else
                 j1 = rho_L[j1];
             }
-        
+
         /* mirror remote decision to send */
         send_size = (send ? size : 0);
         recv_size = (recv ? size : 0);
@@ -288,20 +294,22 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
                 }
             }
 
-        dfft_offset_send[destproc] = (send ? (stride*j1*sizeof(cpx_t)) : 0);
+        int rank = proc_map[destproc];
+
+        dfft_offset_send[rank] = (send ? (stride*j1*sizeof(cpx_t)) : 0);
         if (rev && (length > c0/c1))
             {
             /* we are directly receving into the work buf */
-            dfft_offset_recv[destproc] = stride*j0_remote*length/c0*sizeof(cpx_t);
+            dfft_offset_recv[rank] = stride*j0_remote*length/c0*sizeof(cpx_t);
             }
         else
             {
-            dfft_offset_recv[destproc] = offset*sizeof(cpx_t);
+            dfft_offset_recv[rank] = offset*sizeof(cpx_t);
             }
 
         dfft_nsend[destproc] = send_size*sizeof(cpx_t);
         dfft_nrecv[destproc] = recv_size*sizeof(cpx_t);
-        offset+=(recv ? size : 0);
+        offset += (recv ? size : 0);
         }
 
     /* we need to pack data if the local input buffer is reversed
@@ -334,9 +342,10 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
 
             int j1_offset = dfft_offset_send[destproc]/sizeof(cpx_t)/stride;
 
+            int rank = proc_map[destproc];
             /* we are sending from a tmp buffer/stride */
-            dfft_offset_send[destproc] = offset*sizeof(cpx_t)*stride;
-            int n = dfft_nsend[destproc]/stride/sizeof(cpx_t);
+            dfft_offset_send[rank] = offset*sizeof(cpx_t)*stride;
+            int n = dfft_nsend[rank]/stride/sizeof(cpx_t);
             int j;
             for (j = 0; j < n; j++)
                 for (k = 0; k < stride; ++ k)
@@ -413,6 +422,7 @@ void mpifft1d_dif(int *dim,
             int *dfft_offset_send,
             int *dfft_offset_recv,
             MPI_Comm comm,
+            int *proc_map,
             int row_m)
     {
     int p = pdim[current_dim];
@@ -443,7 +453,7 @@ void mpifft1d_dif(int *dim,
         for (j = 0; j < length; j++)
             {
             double theta = -(double)2.0 * (double)M_PI * alpha/(double) length;
-            cpx_t w; 
+            cpx_t w;
             RE(w) = cos((double)j*theta);
             IM(w) = sin((double)j*theta);
 
@@ -451,7 +461,7 @@ void mpifft1d_dif(int *dim,
             IM(w) *=sign;
 
             int r;
-            for (r = 0; r < stride; ++r) 
+            for (r = 0; r < stride; ++r)
                 {
                 cpx_t x = out[j*stride+r];
                 cpx_t y;
@@ -472,7 +482,7 @@ void mpifft1d_dif(int *dim,
         dfft_redistribute_cyclic_to_block_1d(dim,pdim,ndim,current_dim, c, c1,
             pidx, rev, size, embed, in,out,rho_L,rho_pk0,
             dfft_nsend,dfft_nrecv,dfft_offset_send,dfft_offset_recv,
-            comm, row_m);
+            comm, proc_map, row_m);
         }
 
     /* perform remaining short-distance butterflies,
@@ -485,7 +495,7 @@ void mpifft1d_dif(int *dim,
     for (i = 0; i < st/k0; ++i)
         dfft_local_1dfft(in+i, out+i, plan_short, inverse);
     #endif
-    } 
+    }
 
 /* n-dimensional fft routine (in-place)
  */
@@ -509,6 +519,7 @@ void mpifftnd_dif(int *dim,
             int *dfft_offset_send,
             int *dfft_offset_recv,
             MPI_Comm comm,
+            int *proc_map,
             int row_m)
     {
     int size = size_in;
@@ -521,7 +532,7 @@ void mpifftnd_dif(int *dim,
             plans_long[current_dim], rho_L[current_dim],
             rho_pk0[current_dim],rho_Lk0[current_dim],
             dfft_nsend,dfft_nrecv,dfft_offset_send,dfft_offset_recv,
-            comm,row_m);
+            comm,proc_map, row_m);
 
         int l = dim[current_dim]/pdim[current_dim];
         int stride = size/inembed[current_dim];
@@ -560,6 +571,7 @@ void redistribute_nd(int *dim,
             int *dfft_offset_recv,
             int c2b,
             MPI_Comm comm,
+            int *proc_map,
             int row_m)
     {
     cpx_t *cur_work =work;
@@ -573,13 +585,13 @@ void redistribute_nd(int *dim,
             dfft_redistribute_block_to_cyclic_1d(dim, pdim, ndim, current_dim,
                 1, pdim[current_dim], pidx, size, embed,
                 cur_work, cur_scratch, dfft_nsend,dfft_nrecv,
-                dfft_offset_send, dfft_offset_recv, comm,row_m);
+                dfft_offset_send, dfft_offset_recv, comm, proc_map, row_m);
         else
             dfft_redistribute_cyclic_to_block_1d(dim, pdim, ndim, current_dim,
                 pdim[current_dim], 1, pidx, 0, size, embed, cur_work,
                 cur_scratch, NULL, NULL, dfft_nsend,
-                dfft_nrecv, dfft_offset_send, dfft_offset_recv, comm,row_m);
-        
+                dfft_nrecv, dfft_offset_send, dfft_offset_recv, comm, proc_map, row_m);
+
         int l = dim[current_dim]/pdim[current_dim];
         int stride = size/embed[current_dim];
 
@@ -598,7 +610,7 @@ void redistribute_nd(int *dim,
             }
 
         /* swap buffers */
-        cpx_t *tmp;        
+        cpx_t *tmp;
         tmp = cur_scratch;
         cur_scratch = cur_work;
         cur_work = tmp;
@@ -641,7 +653,7 @@ int dfft_execute(cpx_t *h_in, cpx_t *h_out, int dir, dfft_plan p)
         /* redistribution of input */
         redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
             p.size_in, p.inembed, work, scratch, p.nsend,p.nrecv,
-            p.offset_send,p.offset_recv, 0, p.comm,p.row_m); 
+            p.offset_send,p.offset_recv, 0, p.comm, p.proc_map, p.row_m);
         }
 
     /* multi-dimensional FFT */
@@ -650,14 +662,14 @@ int dfft_execute(cpx_t *h_in, cpx_t *h_out, int dir, dfft_plan p)
         dir ? p.plans_short_inverse : p.plans_short_forward,
         dir ? p.plans_long_inverse : p.plans_long_forward,
         p.rho_L, p.rho_pk0, p.rho_Lk0, p.nsend,p.nrecv,
-        p.offset_send,p.offset_recv, p.comm,p.row_m);
+        p.offset_send,p.offset_recv, p.comm, p.proc_map, p.row_m);
 
     if ((dir && !p.input_cyclic) || (!dir && !p.output_cyclic))
         {
         /* redistribution of output */
         redistribute_nd(p.gdim, p.pdim, p.ndim, p.pidx,
             p.size_out,p.oembed, work, scratch, p.nsend,p.nrecv,
-            p.offset_send,p.offset_recv, 1, p.comm,p.row_m); 
+            p.offset_send,p.offset_recv, 1, p.comm, p.proc_map, p.row_m);
         }
 
     if (out_of_place)
@@ -672,11 +684,12 @@ int dfft_create_plan(dfft_plan *p,
     int ndim, int *gdim, int *inembed, int *oembed, 
     int *pdim, int *pidx, int row_m,
     int input_cyclic, int output_cyclic,
-    MPI_Comm comm)
+    MPI_Comm comm,
+    int *proc_map)
     {
     return dfft_create_plan_common(p, ndim, gdim, inembed,
         oembed, pdim, pidx, row_m,
-        input_cyclic, output_cyclic, comm, 0);
+        input_cyclic, output_cyclic, comm, proc_map, 0);
     }
 
 void dfft_destroy_plan(dfft_plan plan)

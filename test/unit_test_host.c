@@ -9,6 +9,8 @@ void test_distributed_fft_nd(int nd);
 void test_distributed_fft_1d_compare(int n);
 void test_distributed_fft_3d_compare();
 
+int *proc_map;
+
 int main(int argc, char **argv)
     {
     MPI_Init(&argc, &argv);
@@ -16,6 +18,12 @@ int main(int argc, char **argv)
     int s,p;
     MPI_Comm_rank(MPI_COMM_WORLD, &s);
     MPI_Comm_size(MPI_COMM_WORLD, &p);
+
+    /* use a basic grid - processor mapping */
+    proc_map = malloc(sizeof(int)*p);
+    int i;
+    for (i = 0; i < p; i++) proc_map[i] = i;
+
     /* basic test in n = 1 .. 7 dimensions */
     int nd;
     for (nd = 1; nd <= 7; nd++)
@@ -25,8 +33,8 @@ int main(int argc, char **argv)
         }
 
     if (!s) printf("Compare against KISS FFT (d=1)...\n");
-    int i;
-    for (i = 1; i < 24; ++i)
+    /* for (i = 1; i < 24; ++i) */
+    for (i = 1; i < 14; ++i)
         {
         int n = (1 << i);
         if (n <= p) continue;
@@ -36,6 +44,9 @@ int main(int argc, char **argv)
 
     if (!s) printf("Compare against KISS FFT (d=3)... \n");
     test_distributed_fft_3d_compare();
+
+    free(proc_map);
+
     MPI_Finalize();
     }
 
@@ -91,7 +102,7 @@ void test_distributed_fft_nd(int nd)
 
         for (i = 0; i < nd; ++i)
             dim_glob[i] = 1*pdim[i];
-     
+
         RE(in_1[0]) = (double) s;
         IM(in_1[0]) = 0.0f;
 
@@ -99,7 +110,7 @@ void test_distributed_fft_nd(int nd)
         int pidx[1];
         pidx[0] = s;
         dfft_create_plan(&plan_1, nd, dim_glob, NULL, NULL, pdim, pidx, 0, 0, 0,
-            MPI_COMM_WORLD);
+            MPI_COMM_WORLD, proc_map);
 
         /* forward transform */
         dfft_execute(in_1, in_1, 0, plan_1);
@@ -142,9 +153,9 @@ void test_distributed_fft_nd(int nd)
     for (i = 0; i < nd-1; ++i)
         if (!s) printf("%d x ",dim_glob[i]);
     if (!s) printf("%d matrix\n", dim_glob[nd-1]);
-  
+
     dfft_plan plan_2;
-    dfft_create_plan(&plan_2, nd, dim_glob, NULL, NULL, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD);
+    dfft_create_plan(&plan_2, nd, dim_glob, NULL, NULL, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD,proc_map);
 
     /* forward transfom */
     dfft_execute(in_2, in_2, 0, plan_2);
@@ -240,9 +251,9 @@ void test_distributed_fft_nd(int nd)
         }
 
     dfft_plan plan_3_fw,plan_3_bw;
-    dfft_create_plan(&plan_3_fw, nd, dim_glob, inembed, NULL, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD);
-    dfft_create_plan(&plan_3_bw, nd, dim_glob, NULL, inembed, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD);
-   
+    dfft_create_plan(&plan_3_fw, nd, dim_glob, inembed, NULL, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD, proc_map);
+    dfft_create_plan(&plan_3_bw, nd, dim_glob, NULL, inembed, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD, proc_map);
+
     int offset = 0;
     int n_ghost = 2;
     for (i = 0; i < nd; i++)
@@ -253,7 +264,7 @@ void test_distributed_fft_nd(int nd)
 
     /* forward transform */
     dfft_execute(in_3+offset, out_3, 0, plan_3_fw);
-        
+
     /* inverse transform */
     dfft_execute(out_3,in_3+offset, 1, plan_3_bw);
 
@@ -326,8 +337,13 @@ void test_distributed_fft_1d_compare(int n)
     int pidx[1];
     pidx[0]=s;
 
-    double tol = 0.1;
-    double abs_tol = .1;
+    float scale = n;
+    /* assume 0.5 sig digit loss per addition/twiddling (empirical)*/
+    float sig_digits = 7.0-0.5*logf(scale)/logf(2.0);
+    double tol = powf(10.0,-sig_digits);
+    double abs_tol = 1.0*tol;
+    printf("Testing with %f sig digits, rel precision %f, abs precision %f\n", sig_digits,  tol, abs_tol);
+
     int dim_glob[1];
     dim_glob[0] = n;
 
@@ -368,7 +384,7 @@ void test_distributed_fft_1d_compare(int n)
     out = (cpx_t *) malloc(n/p*sizeof(cpx_t));
 
     dfft_plan plan;
-    dfft_create_plan(&plan,1, dim_glob, NULL, NULL, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD);
+    dfft_create_plan(&plan,1, dim_glob, NULL, NULL, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD, proc_map);
 
     // forward transform
     dfft_execute(in, out, 0, plan);
@@ -376,13 +392,12 @@ void test_distributed_fft_1d_compare(int n)
     // do comparison
     for (i = 0; i < n/p; ++i)
         {
-
         int j = s*n/p + i;
 
         double re = RE(out[i]);
         double im = IM(out[i]);
         double re_kiss = out_kiss[j].r;
-        double im_kiss = out_kiss[j].i;  
+        double im_kiss = out_kiss[j].i;
 
         if (fabs(re_kiss) < abs_tol)
             {
@@ -408,7 +423,7 @@ void test_distributed_fft_1d_compare(int n)
     free(in);
     dfft_destroy_plan(plan);
     }
- 
+
 /* Compare a 3d FFT against a reference FFT */
 void test_distributed_fft_3d_compare()
     {
@@ -444,8 +459,6 @@ void test_distributed_fft_3d_compare()
         idx /= pdim[i];
         }
 
-    double tol = 0.001;
-    double abs_tol = 0.2;
     int *dim_glob;
     dim_glob = (int *) malloc(sizeof(int)*nd);
 
@@ -460,11 +473,18 @@ void test_distributed_fft_3d_compare()
     for (i = 0; i < nd-1; ++i)
         if (!s) printf("%d x ",dim_glob[i]);
     if (!s) printf("%d matrix\n", dim_glob[nd-1]);
- 
+
     kiss_fft_cpx *in_kiss;
     in_kiss = (kiss_fft_cpx *)malloc(sizeof(kiss_fft_cpx)*dim_glob[0]*dim_glob[1]*dim_glob[2]);
 
     srand(12345);
+
+    float scale = dim_glob[0]*dim_glob[1]*dim_glob[2];
+    /* assume 0.5 sig digit loss per addition/twiddling (empirical)*/
+    float sig_digits = 7.0-0.5*logf(scale)/logf(2.0);
+    double tol = powf(10.0,-sig_digits);
+    double abs_tol = 1.0*tol;
+    printf("Testing with %f sig digits, rel precision %f, abs precision %f\n", sig_digits,  tol, abs_tol);
 
     // fill table with complex random numbers in row major order
     int x,y,z;
@@ -477,7 +497,7 @@ void test_distributed_fft_3d_compare()
                 {
                 // KISS has column-major storage
                 in_kiss[z+nz*(y+ny*x)].r = (float)rand()/(float)RAND_MAX;
-                in_kiss[z+nz*(y+ny*x)].i =(float)rand()/(float)RAND_MAX;
+                in_kiss[z+nz*(y+ny*x)].i = (float)rand()/(float)RAND_MAX;
                 }
 
     kiss_fft_cpx *out_kiss;
@@ -505,7 +525,7 @@ void test_distributed_fft_3d_compare()
                     x_local = x - pidx[0]*local_nx;
                     y_local = y - pidx[1]*local_ny;
                     z_local = z - pidx[2]*local_nz;
-                   
+
                     RE(in[z_local+local_nz*(y_local+local_ny*x_local)]) =
                         in_kiss[z+nz*(y+ny*x)].r;
                     IM(in[z_local+local_nz*(y_local+local_ny*x_local)]) =
@@ -517,7 +537,7 @@ void test_distributed_fft_3d_compare()
     out = (cpx_t *) malloc(local_nx*local_ny*local_nz*sizeof(cpx_t));
 
     dfft_plan plan;
-    dfft_create_plan(&plan,3, dim_glob, NULL, NULL, pdim,pidx, 0, 0, 0, MPI_COMM_WORLD);
+    dfft_create_plan(&plan,3, dim_glob, NULL, NULL, pdim,pidx, 0, 0, 0, MPI_COMM_WORLD, proc_map);
 
     // forward transform
     dfft_execute(in, out, 0, plan);

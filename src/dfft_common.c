@@ -118,7 +118,7 @@ int dfft_create_execution_flow(dfft_plan *plan)
         int n = 0;
         for (i = 0; i < plan->ndim; ++i)
             if (plan->depth[i] > d) n++;
-       
+
         if (n < plan->ndim || decompose_1d)
             {
             /* 1D FFT for all 'active' dimensions, transposing as we go */
@@ -189,7 +189,7 @@ int dfft_create_execution_flow(dfft_plan *plan)
             /* create multidimensional forward and backward plans */
             #ifdef ENABLE_CUDA
             if (plan->device)
-                { 
+                {
                 int res;
                 res = dfft_cuda_create_nd_plan(&plan->cuda_plans_multi_fw[d][0],
                     plan->ndim, dim, howmany,
@@ -305,10 +305,11 @@ int dfft_create_execution_flow(dfft_plan *plan)
 
 int dfft_create_plan_common(dfft_plan *p,
     int ndim, int *gdim,
-    int *inembed, int *oembed, 
+    int *inembed, int *oembed,
     int *pdim, int *pidx, int row_m,
     int input_cyclic, int output_cyclic,
     MPI_Comm comm,
+    int *proc_map,
     int device)
     {
     int s,nump;
@@ -316,9 +317,13 @@ int dfft_create_plan_common(dfft_plan *p,
     p->comm = comm;
 
     MPI_Comm_size(comm,&nump);
-  
+
     /* number of processor must be power of two */
-    if (nump & (nump-1)) return 4; 
+    if (nump & (nump-1)) return 4;
+
+    /* Allocate memory for processor map and copy over */
+    p->proc_map = malloc(sizeof(int)*nump);
+    memcpy(p->proc_map, proc_map, sizeof(int)*nump);
 
     p->pdim = malloc(ndim*sizeof(int));
     p->gdim = malloc(ndim*sizeof(int));
@@ -333,9 +338,9 @@ int dfft_create_plan_common(dfft_plan *p,
     for (i = 0; i < ndim; i++)
         {
         p->gdim[i] = gdim[i];
-       
+
         /* Every dimension must be a power of two */
-        if (gdim[i] & (gdim[i]-1)) return 5; 
+        if (gdim[i] & (gdim[i]-1)) return 5;
 
         p->pdim[i] = pdim[i];
         }
@@ -394,7 +399,7 @@ int dfft_create_plan_common(dfft_plan *p,
     int size_in = 1;
     int size_out = 1;
 
-    /* since we expect column-major input, the leading dimension 
+    /* since we expect column-major input, the leading dimension
       has no embedding */
     p->inembed[0] = gdim[0]/pdim[0];
     p->oembed[0] = gdim[0]/pdim[0];
@@ -419,7 +424,7 @@ int dfft_create_plan_common(dfft_plan *p,
             int c;
             for (c=gdim[i]; c>length; c /= length)
                 ;
-            p->k0[i] = c; 
+            p->k0[i] = c;
             }
         else
             {
@@ -427,8 +432,8 @@ int dfft_create_plan_common(dfft_plan *p,
             }
         }
 
-    p->rho_L = (int **)malloc(ndim*sizeof(int *)); 
-    p->rho_pk0= (int **)malloc(ndim*sizeof(int *)); 
+    p->rho_L = (int **)malloc(ndim*sizeof(int *));
+    p->rho_pk0= (int **)malloc(ndim*sizeof(int *));
     p->rho_Lk0 = (int **)malloc(ndim*sizeof(int *));
 
     for (i = 0; i < ndim; ++i)
@@ -606,6 +611,8 @@ void dfft_destroy_plan_common(dfft_plan p, int device)
     if (device != p.device) return;
 
     /* Clean-up */
+    free(p.proc_map);
+
     int i;
     int ndim = p.ndim;
     for (i = 0; i < ndim; ++i)
@@ -627,7 +634,7 @@ void dfft_destroy_plan_common(dfft_plan p, int device)
             dfft_cuda_destroy_local_plan(&p.cuda_plans_long_forward[i]);
             dfft_cuda_destroy_local_plan(&p.cuda_plans_long_inverse[i]);
             #endif
-            } 
+            }
         }
 
     for (i = 0; i < ndim; ++i)

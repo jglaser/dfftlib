@@ -234,10 +234,11 @@ void dfft_cuda_redistribute_nd( dfft_plan *plan,int stage, int size_in, int *emb
             send_size *= (send ? size : 0);
             } /* end loop over dimensions */
 
-        plan->nsend[t] = send_size*sizeof(cuda_cpx_t);
-        plan->nrecv[t] = recv_size*sizeof(cuda_cpx_t);
-        plan->offset_send[t] = soffs*sizeof(cuda_cpx_t);
-        plan->offset_recv[t] = roffs*sizeof(cuda_cpx_t);
+        int rank = plan->proc_map[t];
+        plan->nsend[rank] = send_size*sizeof(cuda_cpx_t);
+        plan->nrecv[rank] = recv_size*sizeof(cuda_cpx_t);
+        plan->offset_send[rank] = soffs*sizeof(cuda_cpx_t);
+        plan->offset_recv[rank] = roffs*sizeof(cuda_cpx_t);
         roffs += recv_size;
         soffs += send_size;
         } /* end loop over processors */
@@ -267,7 +268,7 @@ void dfft_cuda_redistribute_nd( dfft_plan *plan,int stage, int size_in, int *emb
                   plan->comm);
     #else
     // stage into host buf
-    cudaMemcpy(plan->h_stage_in, plan->d_scratch, sizeof(cuda_cpx_t)*size_in,cudaMemcpyDefault); 
+    cudaMemcpy(plan->h_stage_in, plan->d_scratch, sizeof(cuda_cpx_t)*size_in,cudaMemcpyDefault);
     if (plan->check_cuda_errors) CHECK_CUDA();
 
     MPI_Alltoallv(plan->h_stage_in,plan->nsend, plan->offset_send, MPI_BYTE,
@@ -275,7 +276,7 @@ void dfft_cuda_redistribute_nd( dfft_plan *plan,int stage, int size_in, int *emb
                   plan->comm);
 
     // copy back received data
-    cudaMemcpy(plan->d_scratch_2,plan->h_stage_out, sizeof(cuda_cpx_t)*size_in,cudaMemcpyDefault); 
+    cudaMemcpy(plan->d_scratch_2,plan->h_stage_out, sizeof(cuda_cpx_t)*size_in,cudaMemcpyDefault);
     if (plan->check_cuda_errors) CHECK_CUDA();
     #endif
 
@@ -1105,13 +1106,14 @@ int dfft_cuda_execute(cuda_cpx_t *d_in, cuda_cpx_t *d_out, int dir, dfft_plan *p
 
 int dfft_cuda_create_plan(dfft_plan *p,
     int ndim, int *gdim,
-    int *inembed, int *oembed, 
+    int *inembed, int *oembed,
     int *pdim, int *pidx, int row_m,
     int input_cyclic, int output_cyclic,
-    MPI_Comm comm)
+    MPI_Comm comm,
+    int *proc_map)
     {
     int res = dfft_create_plan_common(p, ndim, gdim, inembed, oembed,
-        pdim, pidx, row_m, input_cyclic, output_cyclic, comm, 1);
+        pdim, pidx, row_m, input_cyclic, output_cyclic, comm, proc_map, 1);
 
     #ifndef ENABLE_MPI_CUDA
     /* allocate staging bufs */

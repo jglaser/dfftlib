@@ -13,6 +13,8 @@ void test_distributed_fft_3d_compare();
 char enable_cuda[] = "MV2_USE_CUDA=1";
 char enable_threads[] = "MV2_ENABLE_AFFINITY=0";
 
+int *proc_map;
+
 int main(int argc, char **argv)
     {
     int gpu = 0;
@@ -39,6 +41,12 @@ int main(int argc, char **argv)
     int s,p;
     MPI_Comm_rank(MPI_COMM_WORLD, &s);
     MPI_Comm_size(MPI_COMM_WORLD, &p);
+
+    /* use a basic grid - processor mapping */
+    proc_map = malloc(sizeof(int)*p);
+    int i;
+    for (i = 0; i < p; i++) proc_map[i] = i;
+
     /* basic test in n = 1 .. 7 dimensions */
     int nd;
     for (nd = 1; nd <= 7; nd++)
@@ -48,8 +56,9 @@ int main(int argc, char **argv)
         }
 
     if (!s) printf("Compare against KISS FFT (d=1)...\n");
-    int i;
-    for (i = 1; i < 24; ++i)
+
+    for (i = 1; i < 14; ++i)
+    /*for (i = 1; i < 24; ++i) */
         {
         int n = (1 << i);
         if (n <= p) continue;
@@ -59,6 +68,8 @@ int main(int argc, char **argv)
 
     if (!s) printf("Compare against KISS FFT (d=3)... \n");
     test_distributed_fft_3d_compare();
+
+    free(proc_map);
     MPI_Finalize();
     }
 
@@ -116,10 +127,10 @@ void test_distributed_fft_nd(int nd)
 
         for (i = 0; i < nd; ++i)
             dim_glob[i] = 1*pdim[i];
-     
+
         CUDA_RE(in_1_h[0]) = (double) s;
         CUDA_IM(in_1_h[0]) = 0.0f;
-       
+
         /* copy to device */
         cudaMemcpy(in_1_d, in_1_h, sizeof(cuda_cpx_t)*1,cudaMemcpyDefault);
 
@@ -128,7 +139,7 @@ void test_distributed_fft_nd(int nd)
         int pidx[1];
         pidx[0] =s;
         dfft_cuda_create_plan(&plan_1, nd, dim_glob, NULL, NULL, pdim, pidx,
-            0, 0, 0, MPI_COMM_WORLD);
+            0, 0, 0, MPI_COMM_WORLD, proc_map);
         dfft_cuda_check_errors(&plan_1,1);
 
         /* forward transform */
@@ -181,9 +192,9 @@ void test_distributed_fft_nd(int nd)
     for (i = 0; i < nd-1; ++i)
         if (!s) printf("%d x ",dim_glob[i]);
     if (!s) printf("%d matrix\n", dim_glob[nd-1]);
-  
+
     dfft_plan plan_2;
-    dfft_cuda_create_plan(&plan_2, nd, dim_glob, NULL, NULL, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_create_plan(&plan_2, nd, dim_glob, NULL, NULL, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD, proc_map);
     dfft_cuda_check_errors(&plan_2,1);
 
     /* forward transfom */
@@ -289,11 +300,11 @@ void test_distributed_fft_nd(int nd)
     cudaMemcpy(in_3_d, in_3_h, sizeof(cuda_cpx_t)*size_4n_embed,cudaMemcpyDefault);
 
     dfft_plan plan_3_fw,plan_3_bw;
-    dfft_cuda_create_plan(&plan_3_fw, nd, dim_glob, inembed, NULL, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_create_plan(&plan_3_fw, nd, dim_glob, inembed, NULL, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD, proc_map);
     dfft_cuda_check_errors(&plan_3_fw,1);
-    dfft_cuda_create_plan(&plan_3_bw, nd, dim_glob, NULL, inembed, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_create_plan(&plan_3_bw, nd, dim_glob, NULL, inembed, pdim, pidx, 0, 0, 0, MPI_COMM_WORLD, proc_map);
     dfft_cuda_check_errors(&plan_3_bw,1);
-   
+
     int offset = 0;
     int n_ghost = 2;
     for (i = 0; i < nd; i++)
@@ -304,7 +315,7 @@ void test_distributed_fft_nd(int nd)
 
     /* forward transform */
     dfft_cuda_execute(in_3_d+offset, out_3_d, 0, &plan_3_fw);
-        
+
     /* inverse transform */
     dfft_cuda_execute(out_3_d,in_3_d+offset, 1, &plan_3_bw);
 
@@ -381,8 +392,13 @@ void test_distributed_fft_1d_compare(int n)
     int pidx[1];
     pidx[0]=s;
 
-    double tol = 0.01;
-    double abs_tol = .1;
+    float scale = n;
+    /* assume 0.5 sig digit loss per addition/twiddling (empirical)*/
+    float sig_digits = 7.0-0.5*logf(scale)/logf(2.0);
+    double tol = powf(10.0,-sig_digits);
+    double abs_tol = 1.0*tol;
+    printf("Testing with %f sig digits, rel precision %f, abs precision %f\n", sig_digits,  tol, abs_tol);
+
     int dim_glob[1];
     dim_glob[0] = n;
 
@@ -423,9 +439,9 @@ void test_distributed_fft_1d_compare(int n)
     cuda_cpx_t *out_d,*out_h;
     cudaMalloc((void **)&out_d,sizeof(cuda_cpx_t)*n/p);
     out_h = (cuda_cpx_t *)malloc(sizeof(cuda_cpx_t)*n/p);
-    
+
     dfft_plan plan;
-    dfft_cuda_create_plan(&plan,1, dim_glob, NULL, NULL, pdim, pidx,0, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_create_plan(&plan,1, dim_glob, NULL, NULL, pdim, pidx,0, 0, 0, MPI_COMM_WORLD, proc_map);
     dfft_cuda_check_errors(&plan,1);
 
     /* copy data to device */
@@ -511,8 +527,6 @@ void test_distributed_fft_3d_compare()
         idx /= pdim[i];
         }
 
-    double tol = 0.001;
-    double abs_tol = 0.2;
     int *dim_glob;
     dim_glob = (int *) malloc(sizeof(int)*nd);
 
@@ -527,7 +541,14 @@ void test_distributed_fft_3d_compare()
     for (i = 0; i < nd-1; ++i)
         if (!s) printf("%d x ",dim_glob[i]);
     if (!s) printf("%d matrix\n", dim_glob[nd-1]);
- 
+
+    float scale = dim_glob[0]*dim_glob[1]*dim_glob[2];
+    /* assume 0.5 sig digit loss per addition/twiddling (empirical)*/
+    float sig_digits = 7.0-0.5*logf(scale)/logf(2.0);
+    double tol = powf(10.0,-sig_digits);
+    double abs_tol = 1.0*tol;
+    printf("Testing with %f sig digits, rel precision %f, abs precision %f\n", sig_digits,  tol, abs_tol);
+
     kiss_fft_cpx *in_kiss;
     in_kiss = (kiss_fft_cpx *)malloc(sizeof(kiss_fft_cpx)*dim_glob[0]*dim_glob[1]*dim_glob[2]);
 
@@ -573,7 +594,7 @@ void test_distributed_fft_3d_compare()
                     x_local = x - pidx[0]*local_nx;
                     y_local = y - pidx[1]*local_ny;
                     z_local = z - pidx[2]*local_nz;
-                   
+
                     CUDA_RE(in_h[z_local+local_nz*(y_local+local_ny*x_local)]) =
                         in_kiss[z+nz*(y+ny*x)].r;
                     CUDA_IM(in_h[z_local+local_nz*(y_local+local_ny*x_local)]) =
@@ -586,7 +607,7 @@ void test_distributed_fft_3d_compare()
     out_h = (cuda_cpx_t *) malloc(sizeof(cuda_cpx_t)*local_nx*local_ny*local_nz);
 
     dfft_plan plan;
-    dfft_cuda_create_plan(&plan,3, dim_glob, NULL, NULL, pdim, pidx,0, 0, 0, MPI_COMM_WORLD);
+    dfft_cuda_create_plan(&plan,3, dim_glob, NULL, NULL, pdim, pidx,0, 0, 0, MPI_COMM_WORLD, proc_map);
     dfft_cuda_check_errors(&plan,1);
 
     /* copy data to device */

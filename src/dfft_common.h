@@ -29,14 +29,14 @@ typedef struct
 
     #ifdef ENABLE_CUDA
     cuda_plan_t *cuda_plans_short_forward; /* Cuda plans */
-    cuda_plan_t *cuda_plans_long_forward; 
+    cuda_plan_t *cuda_plans_long_forward;
     cuda_plan_t *cuda_plans_short_inverse;
-    cuda_plan_t *cuda_plans_long_inverse; 
+    cuda_plan_t *cuda_plans_long_inverse;
     #endif
 
-    int **rho_L;        /* bit reversal lookup length L, per dimension */   
+    int **rho_L;        /* bit reversal lookup length L, per dimension */
     int **rho_pk0;      /* bit reversal lookup length p/k0, per dimension */
-    int **rho_Lk0;      /* bit reversal lookup length L/k0, per dimension */   
+    int **rho_Lk0;      /* bit reversal lookup length L/k0, per dimension */
 
     int *pdim;            /* Dimensions of processor grid */
     int *pidx;            /* Processor index, per dimension */
@@ -59,7 +59,7 @@ typedef struct
     cuda_cpx_t *d_scratch_3;
     cuda_cpx_t *h_stage_in;  /* Staging array for MPI calls */
     cuda_cpx_t *h_stage_out; /* Staging array for MPI calls */
-    #endif 
+    #endif
 
     int scratch_size;     /* Size of scratch array */
 
@@ -67,7 +67,7 @@ typedef struct
     int size_in;          /* size including embedding */
     int size_out;         /* size including embedding */
     int *k0;              /* Last stage of butterflies (per dimension */
-    
+
     int input_cyclic;     /* ==1 if input for the forward transform is cyclic */
     int output_cyclic;    /* ==1 if output for the backward transform is cyclic */
 
@@ -104,13 +104,15 @@ typedef struct
     cuda_plan_t *cuda_plans_final_fw; /* Level-0 plans, forward */
     cuda_plan_t *cuda_plans_final_bw; /* backward plans */
     cuda_scalar_t **d_alpha;          /* alpha variables for twiddle factors per dim */
-    cuda_scalar_t **h_alpha;          /* host variable */ 
+    cuda_scalar_t **h_alpha;          /* host variable */
     int **d_rev_j1, **d_rev_partial, **d_rev_global;  /* bit reversal flags */
     #endif
 
     #ifdef ENABLE_HOST
-    plan_t **plans_multi; 
+    plan_t **plans_multi;
     #endif
+
+    int *proc_map;                    /* Map of cartesian index onto processor ranks */
 
     int init;                         /* ==1 if initialization run is requested */
     } dfft_plan;
@@ -119,9 +121,10 @@ typedef struct
  * Create a plan for distributed FFT (internal interface)
  */
 int dfft_create_plan_common(dfft_plan *plan,
-    int ndim, int *gdim, int *inembed, int *ombed, 
+    int ndim, int *gdim, int *inembed, int *ombed,
     int *pdim, int *pidx, int row_m, int input_cyclic, int output_cyclic,
     MPI_Comm comm,
+    int *proc_map,
     int device);
 
 /*
