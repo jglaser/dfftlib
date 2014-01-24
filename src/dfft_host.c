@@ -102,7 +102,7 @@ void dfft_redistribute_block_to_cyclic_1d(
         int r;
         for(r=0; r< (size/stride); r++)
             for (k=0; k < stride; k++)
-               scratch[offset + r*stride+k]=  work[(j+r*ratio)*stride+k]; 
+               scratch[offset + r*stride+k]=  work[(j+r*ratio)*stride+k];
         }
 
     /* initialize recv offsets */
@@ -307,8 +307,8 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
             dfft_offset_recv[rank] = offset*sizeof(cpx_t);
             }
 
-        dfft_nsend[destproc] = send_size*sizeof(cpx_t);
-        dfft_nrecv[destproc] = recv_size*sizeof(cpx_t);
+        dfft_nsend[rank] = send_size*sizeof(cpx_t);
+        dfft_nrecv[rank] = recv_size*sizeof(cpx_t);
         offset += (recv ? size : 0);
         }
 
@@ -340,9 +340,10 @@ void dfft_redistribute_cyclic_to_block_1d(int *dim,
                     }
                 }
 
-            int j1_offset = dfft_offset_send[destproc]/sizeof(cpx_t)/stride;
-
             int rank = proc_map[destproc];
+
+            int j1_offset = dfft_offset_send[rank]/sizeof(cpx_t)/stride;
+
             /* we are sending from a tmp buffer/stride */
             dfft_offset_send[rank] = offset*sizeof(cpx_t)*stride;
             int n = dfft_nsend[rank]/stride/sizeof(cpx_t);

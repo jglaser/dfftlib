@@ -643,7 +643,7 @@ void dfft_destroy_plan_common(dfft_plan p, int device)
         free(p.rho_pk0[i]);
         free(p.rho_Lk0[i]);
         }
-    
+
     free(p.rho_L);
     free(p.rho_pk0);
     free(p.rho_Lk0);
