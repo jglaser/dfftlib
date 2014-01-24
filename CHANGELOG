@@ -1,6 +1,6 @@
 0.2
 ---
-- on host, use Vector-Radix FFT for faster computation
+- on device, use Vector-Radix FFT for faster computation
 - support for arbitrary cartesian index to rank maps
 
 0.1
