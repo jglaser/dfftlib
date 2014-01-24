@@ -1,4 +1,4 @@
-dfftlib 0.1 - Distributed FFT library
+dfftlib 0.2 - Distributed FFT library
 =====================================
 
 This library supports fast d-dimensional distributed FFT over MPI, using a
@@ -21,7 +21,7 @@ INSTALLATION
 
 To install, type
 
-$ tar xvfz dfftlib-0.1.tar.gz
+$ tar xvfz dfftlib-0.2.tar.gz
 $ mkdir dfftlib-build
 $ cd dfftlib-build
 $ cmake -D CMAKE_INSTALL_PREFIX=<your-install-root> ../dfftlib-0.1
@@ -50,4 +50,4 @@ has to be a power of two as well.
 
 CONTACT
 -------
-Author contact: jglaser@umn.edu
+Author contact: jsglaser@umich.edu
