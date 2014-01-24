@@ -24,7 +24,7 @@ To install, type
 $ tar xvfz dfftlib-0.2.tar.gz
 $ mkdir dfftlib-build
 $ cd dfftlib-build
-$ cmake -D CMAKE_INSTALL_PREFIX=<your-install-root> ../dfftlib-0.1
+$ cmake -D CMAKE_INSTALL_PREFIX=<your-install-root> ../dfftlib-0.2
 $ make install
 
 Prerequisites (optional):
