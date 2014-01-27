@@ -1,6 +1,6 @@
 if(ENABLE_HOST)
     add_executable(unit_test_host unit_test_host.c kiss_fft.c kiss_fftnd.c)
-    target_link_libraries(unit_test_host dfft)
+    target_link_libraries(unit_test_host dfft m)
 
     include_directories(${MPI_INCLUDE_PATH})
     if(MPI_COMPILE_FLAGS)
@@ -17,7 +17,7 @@ endif()
 
 if(ENABLE_CUDA)
     add_executable(unit_test_cuda unit_test_cuda.c kiss_fft.c kiss_fftnd.c)
-    target_link_libraries(unit_test_cuda dfft)
+    target_link_libraries(unit_test_cuda dfft m)
 
     include_directories(${MPI_INCLUDE_PATH} ${CUDA_TOOLKIT_INCLUDE})
     if(MPI_COMPILE_FLAGS)
