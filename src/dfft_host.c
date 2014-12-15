@@ -3,7 +3,9 @@
 
 #include "dfft_host.h"
 
+#ifdef ENABLE_OPENMP
 #include <omp.h>
+#endif
 #include <math.h>
 
 /*****************************************************************************
