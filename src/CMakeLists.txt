@@ -23,16 +23,16 @@ if(ENABLE_HOST)
 endif()
 
 add_library (dfft SHARED dfft_common.c ${HOST_SOURCES} ${CUDA_SOURCES} ${CUDA_OBJECTS}) 
-target_link_libraries(dfft ${MPI_LIBRARIES} ${LOCAL_FFT_LIBRARIES} ${CUDA_LIBS})
+target_link_libraries(dfft ${MPI_C_LIBRARIES} ${LOCAL_FFT_LIBRARIES} ${CUDA_LIBS})
 
 if(MPI_COMPILE_FLAGS)
   set_target_properties(dfft PROPERTIES
-    COMPILE_FLAGS "${MPI_COMPILE_FLAGS}")
+    COMPILE_FLAGS "${MPI_C_COMPILE_FLAGS}")
 endif()
 
 if(MPI_LINK_FLAGS)
   set_target_properties(dfft PROPERTIES
-    LINK_FLAGS "${MPI_LINK_FLAGS}")
+    LINK_FLAGS "${MPI_C_LINK_FLAGS}")
 endif()
 
 
