@@ -104,10 +104,6 @@ int dfft_cuda_local_fft(
     {
     cufftResult res;
     res = cufftExecC2C(p, in, out, dir ? CUFFT_INVERSE : CUFFT_FORWARD);
-    if (res != CUFFT_SUCCESS)
-        {
-        printf("CUFFT Error: %d\n", res);
-        return 1;
-        }
+    return res;
     }
 

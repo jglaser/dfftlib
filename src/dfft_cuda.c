@@ -12,6 +12,7 @@
 #include "dfft_cuda.h"
 #include "dfft_cuda.cuh"
 
+#include <stdio.h>
 #define CHECK_CUDA() \
     {                                                                       \
     cudaDeviceSynchronize();                                                \
@@ -26,9 +27,9 @@
 
 #define CHECK_LOCAL_FFT(res) \
     {                                                                          \
-    if (res != 0)                                                              \
+    if (res != CUFFT_SUCCESS)                                                 \
         {                                                                      \
-        printf("Local FFT failed, file %s, line %d.\n",__FILE__,__LINE__); \
+        printf("Local FFT failed, error code %d, file %s, line %d.\n",res, __FILE__,__LINE__); \
         assert(!res);                                                          \
         exit(1);                                                               \
         }                                                                      \
