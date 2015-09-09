@@ -88,9 +88,15 @@ void dfft_cuda_free_aligned_memory(cuda_cpx_t *ptr)
     }
 
 /* Destroy a 1d plan */
-void dfft_cuda_destroy_local_plan(cuda_plan_t *p)
+int dfft_cuda_destroy_local_plan(cuda_plan_t *p)
     {
-    cufftDestroy(*p);
+    cufftResult res = cufftDestroy(*p);
+    if (res != CUFFT_SUCCESS)
+        {
+        printf("cufftDestroy error: %d\n", res);
+        return res;
+        }
+    return 0;
     }
 
 /*

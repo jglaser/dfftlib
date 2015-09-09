@@ -63,7 +63,7 @@ int dfft_cuda_allocate_aligned_memory(cuda_cpx_t **ptr, size_t size);
 void dfft_cuda_free_aligned_memory(cuda_cpx_t *ptr);
 
 /* Destroy a plan */
-void dfft_cuda_destroy_local_plan(cuda_plan_t *p);
+int dfft_cuda_destroy_local_plan(cuda_plan_t *p);
 
 /*
  * Excecute a local 1D FFT

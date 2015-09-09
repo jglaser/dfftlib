@@ -6,6 +6,8 @@
 #include "dfft_host.h"
 #include "dfft_cuda.h"
 
+#include <stdio.h>
+
 #define CHECK_PLAN_CREATE(res) \
     {                                                                          \
     if (res != 0)                                                              \
@@ -383,17 +385,6 @@ int dfft_create_plan_common(dfft_plan *p,
         return 3;
         #endif
         }
-    else
-        {
-        #ifdef ENABLE_CUDA
-        p->cuda_plans_short_forward = malloc(sizeof(cuda_plan_t)*ndim);
-        p->cuda_plans_long_forward = malloc(sizeof(cuda_plan_t)*ndim);
-        p->cuda_plans_short_inverse = malloc(sizeof(cuda_plan_t)*ndim);
-        p->cuda_plans_long_inverse = malloc(sizeof(cuda_plan_t)*ndim);
-        #else
-        return 2;
-        #endif
-        }
 
     /* local problem size */
     int size_in = 1;
@@ -510,49 +501,29 @@ int dfft_create_plan_common(dfft_plan *p,
             {
             /* plan for short-distance butterflies */
             int st = size/p->inembed[i]*(gdim[i]/pdim[i]);
-            if (!device)
-                {
-                #ifdef ENABLE_HOST
-                int howmany = 1;
-                #ifdef FFT1D_SUPPORTS_THREADS
-                howmany = st/(p->k0[i]);
-                #endif
-                dfft_create_1d_plan(&(p->plans_short_forward[i]),p->k0[i],
-                    howmany, st/(p->k0[i]), 1, st/(p->k0[i]), 1, 0);
-                dfft_create_1d_plan(&(p->plans_short_inverse[i]),p->k0[i],
-                    howmany, st/(p->k0[i]), 1, st/(p->k0[i]), 1, 1);
 
-                /* plan for long-distance butterflies */
-                int length = gdim[i]/pdim[i];
-                #ifdef FFT1D_SUPPORTS_THREADS
-                howmany = st/length;
-                #endif
-                dfft_create_1d_plan(&(p->plans_long_forward[i]), length,
-                    howmany, st/length,1, st/length,1, 0);
-                dfft_create_1d_plan(&(p->plans_long_inverse[i]), length,
-                    howmany, st/length,1, st/length,1, 1);
-                #else
-                return 3;
-                #endif
-                }
-            else
-                {
-                #ifdef ENABLE_CUDA
-                dfft_cuda_create_1d_plan(&(p->cuda_plans_short_forward[i]),p->k0[i],
-                    st/(p->k0[i]), st/(p->k0[i]), 1, st/(p->k0[i]), 1, 0);
-                dfft_cuda_create_1d_plan(&(p->cuda_plans_short_inverse[i]),p->k0[i],
-                    st/(p->k0[i]), st/(p->k0[i]), 1, st/(p->k0[i]), 1, 1);
+            #ifdef ENABLE_HOST
+            int howmany = 1;
+            #ifdef FFT1D_SUPPORTS_THREADS
+            howmany = st/(p->k0[i]);
+            #endif
+            dfft_create_1d_plan(&(p->plans_short_forward[i]),p->k0[i],
+                howmany, st/(p->k0[i]), 1, st/(p->k0[i]), 1, 0);
+            dfft_create_1d_plan(&(p->plans_short_inverse[i]),p->k0[i],
+                howmany, st/(p->k0[i]), 1, st/(p->k0[i]), 1, 1);
 
-                /* plan for long-distance butterflies */
-                int length = gdim[i]/pdim[i];
-                dfft_cuda_create_1d_plan(&(p->cuda_plans_long_forward[i]), length,
-                    st/length, st/length,1, st/length,1, 0);
-                dfft_cuda_create_1d_plan(&(p->cuda_plans_long_inverse[i]), length,
-                    st/length, st/length,1, st/length,1, 1);
-                #else
-                return 2;
-                #endif
-                }
+            /* plan for long-distance butterflies */
+            int length = gdim[i]/pdim[i];
+            #ifdef FFT1D_SUPPORTS_THREADS
+            howmany = st/length;
+            #endif
+            dfft_create_1d_plan(&(p->plans_long_forward[i]), length,
+                howmany, st/length,1, st/length,1, 0);
+            dfft_create_1d_plan(&(p->plans_long_inverse[i]), length,
+                howmany, st/length,1, st/length,1, 1);
+            #else
+            return 3;
+            #endif
 
             size /= p->inembed[i];
             size *= p->oembed[i];
@@ -596,7 +567,7 @@ int dfft_create_plan_common(dfft_plan *p,
     p->check_cuda_errors = 0;
     #endif
     #endif
-    
+
     p->row_m = row_m;
 
     /* before plan creation is complete, an initialization run will
@@ -604,7 +575,7 @@ int dfft_create_plan_common(dfft_plan *p,
     p->init = 1;
 
     return 0;
-    } 
+    }
 
 void dfft_destroy_plan_common(dfft_plan p, int device)
     {
@@ -624,15 +595,6 @@ void dfft_destroy_plan_common(dfft_plan p, int device)
             dfft_destroy_1d_plan(&p.plans_short_inverse[i]);
             dfft_destroy_1d_plan(&p.plans_long_forward[i]);
             dfft_destroy_1d_plan(&p.plans_long_inverse[i]);
-            #endif
-            }
-        else
-            {
-            #ifdef ENABLE_CUDA
-            dfft_cuda_destroy_local_plan(&p.cuda_plans_short_forward[i]);
-            dfft_cuda_destroy_local_plan(&p.cuda_plans_short_inverse[i]);
-            dfft_cuda_destroy_local_plan(&p.cuda_plans_long_forward[i]);
-            dfft_cuda_destroy_local_plan(&p.cuda_plans_long_inverse[i]);
             #endif
             }
         }
@@ -684,7 +646,7 @@ void dfft_destroy_plan_common(dfft_plan p, int device)
             int j;
             for (j = 0; j < p.n_fft[d]; ++j)
                 {
-                if (p.device)
+                if (p.device && d < p.depth[j])
                     {
                     #ifdef ENABLE_CUDA
                     dfft_cuda_destroy_local_plan(&p.cuda_plans_multi_fw[d][j]);

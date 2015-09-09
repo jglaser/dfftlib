@@ -27,13 +27,6 @@ typedef struct
     plan_t *plans_long_inverse;  /* long distance butterflies, inverse dir */
     #endif
 
-    #ifdef ENABLE_CUDA
-    cuda_plan_t *cuda_plans_short_forward; /* Cuda plans */
-    cuda_plan_t *cuda_plans_long_forward;
-    cuda_plan_t *cuda_plans_short_inverse;
-    cuda_plan_t *cuda_plans_long_inverse;
-    #endif
-
     int **rho_L;        /* bit reversal lookup length L, per dimension */
     int **rho_pk0;      /* bit reversal lookup length p/k0, per dimension */
     int **rho_Lk0;      /* bit reversal lookup length L/k0, per dimension */
