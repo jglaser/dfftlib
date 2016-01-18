@@ -36,14 +36,13 @@ endif()
 include(CUDA_MPI.cmake)
 
 configure_file (
-  "${PROJECT_SOURCE_DIR}/src/dfft_lib_config.h.in"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/dfft_lib_config.h.in"
   "${PROJECT_BINARY_DIR}/dfft_lib_config.h"
    LOCAL_FFT_LIB
    )
 
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/src")
 include_directories("${PROJECT_BINARY_DIR}")
-
-include_directories("${PROJECT_SOURCE_DIR}/src")
 
 # library source
 add_subdirectory(src)
