@@ -1125,8 +1125,14 @@ int dfft_cuda_create_plan(dfft_plan *p,
     int size = p->scratch_size*sizeof(cuda_cpx_t);
     int page_size = getpagesize();
     size = ((size + page_size - 1) / page_size) * page_size;
-    posix_memalign((void **)&(p->h_stage_in),page_size,size);
-    posix_memalign((void **)&(p->h_stage_out),page_size,size);
+    int retval = posix_memalign((void **)&(p->h_stage_in),page_size,size);
+    if (retval != 0)
+        return 1;
+
+    retval = posix_memalign((void **)&(p->h_stage_out),page_size,size);
+    if (retval != 0)
+        return 1;
+
     cudaHostRegister(p->h_stage_in, size, cudaHostAllocDefault);
     CHECK_CUDA();
     cudaHostRegister(p->h_stage_out, size, cudaHostAllocDefault);
